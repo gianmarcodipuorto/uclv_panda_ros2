@@ -1,0 +1,9 @@
+*.so filter=lfs diff=lfs merge=lfs -text
+src/onnxruntime/lib/pkgconfig filter=lfs diff=lfs merge=lfs -text
+src/onnxruntime/lib/cmake filter=lfs diff=lfs merge=lfs -text
+src/onnxruntime/lib/libonnxruntime.so filter=lfs diff=lfs merge=lfs -text
+src/onnxruntime/lib/libonnxruntime.so.1 filter=lfs diff=lfs merge=lfs -text
+src/onnxruntime/lib/libonnxruntime.so.1.22.0 filter=lfs diff=lfs merge=lfs -text
+src/onnxruntime/lib/libonnxruntime_providers_cuda.so filter=lfs diff=lfs merge=lfs -text
+src/onnxruntime/lib/libonnxruntime_providers_shared.so filter=lfs diff=lfs merge=lfs -text
+src/onnxruntime/lib/libonnxruntime_providers_tensorrt.so filter=lfs diff=lfs merge=lfs -text

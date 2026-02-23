@@ -1,0 +1,6 @@
+sensor_msgs/JointState desired_joint_cmd
+float64 total_time
+---
+bool completed
+---
+float64 time_left
