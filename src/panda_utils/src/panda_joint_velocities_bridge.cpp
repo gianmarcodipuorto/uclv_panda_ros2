@@ -246,7 +246,7 @@ class JointVelocitiesBridge : public rclcpp_lifecycle::LifecycleNode {
         this->declare_parameter<double>("load", 0.0);
         this->declare_parameter<std::vector<double>>("load_inertia",{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0});
         this->declare_parameter<double>("critical_height", 0.1);
-        this->declare_parameter<double>("command_timeout_ms", 5.0);
+        this->declare_parameter<double>("command_timeout_ms", 10000.0);
 
         
         //Setup
@@ -278,6 +278,7 @@ class JointVelocitiesBridge : public rclcpp_lifecycle::LifecycleNode {
         velocity_cmd_sub = this->create_subscription<JointState>(
             "/panda/joint_velocity_command", velocity_cmd_qos,
             [this](const JointState::SharedPtr msg) {
+              
               commanded_velocities.set({msg->velocity[0], msg->velocity[1], msg->velocity[2], msg->velocity[3], msg->velocity[4], msg->velocity[5], msg->velocity[6]});
               last_cmd_time = this->now();
               have_cmd = true;

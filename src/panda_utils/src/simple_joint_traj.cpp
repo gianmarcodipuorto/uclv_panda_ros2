@@ -1,4 +1,5 @@
 
+#include "uclv_panda_interfaces/msg/joints_commanded_positions.hpp"
 #include "sensor_msgs/msg/joint_state.hpp"
 #include "panda_utils/constants.hpp"
 #include <realtime_tools/realtime_publisher.hpp>
@@ -48,7 +49,7 @@ int main(int argc, char **argv) {
         position_cmd_qos.reliable();
         position_cmd_qos.durability_volatile();
     //create a standard publisher for command positions, to be used in the control loop
-    auto cmd_position_pub = node->create_publisher<sensor_msgs::msg::JointState>(
+    auto cmd_position_pub = node->create_publisher<uclv_panda_interfaces::msg::JointsCommandedPositions>(
             "/panda/joint_position_command",
             position_cmd_qos);
 
@@ -96,21 +97,19 @@ int main(int argc, char **argv) {
 
     rclcpp::Time t0 = node->now();
     rclcpp::Duration t = rclcpp::Duration(0, 0);
-    sensor_msgs::msg::JointState cmd;
-    cmd.name = q0.name;
-    cmd.position.resize(7);
+    uclv_panda_interfaces::msg::JointsCommandedPositions cmd;
     auto desired_goal = q0;
     desired_goal.position[0] += 0.2;
 
     
-    auto next_wake = std::chrono::steady_clock::now() + std::chrono::milliseconds(1);
+    auto next_wake = std::chrono::steady_clock::now() + std::chrono::milliseconds(5);
     
     while (rclcpp::ok() && t < traj_duration) {
     // auto old_t = cmd.header.stamp;
     t = node->now() - t0;
     cmd.header.stamp = node->now();  // Subito dopo il calcolo di t
     for (size_t i = 0; i < 7; i++) {
-    cmd.position[i] =quintic(q0.position[i], desired_goal.position[i], t.seconds(), traj_duration.seconds());     
+    cmd.positions[i] =quintic(q0.position[i], desired_goal.position[i], t.seconds(), traj_duration.seconds());     
     }
       // // Strong real-time: pubblica senza bloccare
       // if (cmd_position_pub->trylock()) {
@@ -121,7 +120,7 @@ int main(int argc, char **argv) {
 
       // // loop_rate.sleep();
       std::this_thread::sleep_until(next_wake);
-      next_wake += std::chrono::milliseconds(1);
+      next_wake += std::chrono::milliseconds(5);
     }
 
   rclcpp::shutdown();

@@ -48,13 +48,19 @@ add_executable(simple_joints_traj ./src/simple_joint_traj.cpp)
 ament_target_dependencies(simple_joints_traj rclcpp uclv_panda_interfaces std_msgs tf2_eigen sensor_msgs rclcpp_lifecycle realtime_tools geometry_msgs)
 target_link_libraries(simple_joints_traj franka)
 
+add_executable(simple_velocity_traj ./src/simple_velocity_joint_traj.cpp)
+ament_target_dependencies(simple_velocity_traj rclcpp uclv_panda_interfaces std_msgs tf2_eigen sensor_msgs rclcpp_lifecycle realtime_tools geometry_msgs)
+target_link_libraries(simple_velocity_traj franka)
+
+
 install(TARGETS
   panda_joint_velocities_bridge
   panda_joint_positions_bridge
   panda_cartesian_velocity_bridge
   panda_cartesian_position_bridge
   simple_joints_traj
-  
+  simple_velocity_traj
+
   DESTINATION lib/${PROJECT_NAME}
 )
 

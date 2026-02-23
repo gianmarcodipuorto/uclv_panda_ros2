@@ -20,6 +20,7 @@
 
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_lifecycle/lifecycle_node.hpp>
+// #include <rclcpp_components/register_node_macro.hpp>
 
 #include <realtime_tools/realtime_thread_safe_box.hpp>
 #include "realtime_tools/realtime_tools/realtime_helpers.hpp"
@@ -29,9 +30,11 @@
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "sensor_msgs/msg/joint_state.hpp"
 
-#include "sensor_msgs/msg/joint_state.hpp"
+#include "uclv_panda_interfaces/msg/joints_commanded_positions.hpp"
 #include "panda_utils/constants.hpp"
 #include "panda_utils/utils_func.hpp"
+
+#include <queue>
 
 template <typename messageT> using Publisher = rclcpp::Publisher<messageT>;  
 using geometry_msgs::msg::Pose;
@@ -176,7 +179,11 @@ class JointPositionsBridge : public rclcpp_lifecycle::LifecycleNode {
     private:
 
     //Subscribers
-    rclcpp::Subscription<JointState>::SharedPtr joint_positions_cmd_sub;
+    rclcpp::Subscription<uclv_panda_interfaces::msg::JointsCommandedPositions>::SharedPtr joint_positions_cmd_sub;
+
+    //group subscribers
+    rclcpp::CallbackGroup::SharedPtr rt_callback_group_;
+    std::thread rt_spin_thread_;
 
     // Robot pose publisher and debug
     realtime_tools::RealtimePublisher<geometry_msgs::msg::PoseStamped>::SharedPtr robot_pose_pub_computed{};
@@ -184,8 +191,10 @@ class JointPositionsBridge : public rclcpp_lifecycle::LifecycleNode {
     realtime_tools::RealtimePublisher<sensor_msgs::msg::JointState>::SharedPtr joint_states_pub{}; 
 
     //debug
-    JointState cmd_debug{};
-    realtime_tools::RealtimePublisher<JointState>::SharedPtr cmd_debug_pub{};
+    uclv_panda_interfaces::msg::JointsCommandedPositions cmd_debug{};
+    uclv_panda_interfaces::msg::JointsCommandedPositions cmd_prev{};
+    realtime_tools::RealtimePublisher<uclv_panda_interfaces::msg::JointsCommandedPositions>::SharedPtr cmd_debug_pub{};
+    realtime_tools::RealtimePublisher<uclv_panda_interfaces::msg::JointsCommandedPositions>::SharedPtr prev_cmd_pub{};
     
     // Robot related variables
     std::optional<franka::Robot> panda_franka; //It is the object thath communicates with the robot through the FCI
@@ -212,10 +221,15 @@ class JointPositionsBridge : public rclcpp_lifecycle::LifecycleNode {
       { {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0} },
       { {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0} }
     };
-    std::atomic<int> active_cmd_idx{0};
 
     // stato iniziale
     std::array<double, 7UL> initial_pos_{};
+
+    //command buffer
+    std::array<double, 7UL> pos_cmd{};
+    std::array<double, 7UL> pos_cmd_smoothed{};
+    std::array<double, 7UL> input_old{};
+    std::array<double, 7UL> output_old{};
     
     // Debug
     JointState joint_state_to_pub{};
@@ -244,6 +258,10 @@ class JointPositionsBridge : public rclcpp_lifecycle::LifecycleNode {
     bool have_cmd{false};
     double critical_height{0.1};
 
+    //buffer per il controllo
+    int read_idx = 0;
+    int write_idx = 0;
+
     // Demo control
     bool use_demo_{false};
     bool demo_initialized_{false};
@@ -254,6 +272,15 @@ class JointPositionsBridge : public rclcpp_lifecycle::LifecycleNode {
     //Eigen::Vector<double, 7UL> prev_command{};
     std::array<double, 7UL> prev_command{};
     bool is_initialized = false;
+
+    //queue
+    std::queue<std::array<double, 7UL>> command_queue;
+    std::mutex command_queue_mutex;
+
+
+    //quintic interpolation
+    double elapsed_time_quintic{0.0};
+    
 
 
 
@@ -268,6 +295,14 @@ class JointPositionsBridge : public rclcpp_lifecycle::LifecycleNode {
       }
     }
 
+    std::array<double, 7UL> first_order_filter (const std::array<double, 7UL> &input, std::array<double, 7UL> input_old, std::array<double, 7UL> &output_old) {
+        std::array<double, 7UL> output{};
+        for (int i=0; i<7 ; i++){
+          output[i]= 0.285714285714286*output_old[i] + 0.357142857142857*input[i] + 0.357142857142857*input_old[i];
+        }
+        return output;
+    }
+
     public:
     JointPositionsBridge() : rclcpp_lifecycle::LifecycleNode("panda_joint_positions_bridge") {
         
@@ -275,7 +310,7 @@ class JointPositionsBridge : public rclcpp_lifecycle::LifecycleNode {
         this->declare_parameter<bool>("clamp", true);
         this->declare_parameter<std::string>("robot_ip", "10.224.20.198");
         this->declare_parameter<bool>("show_details", false);
-        this->declare_parameter<double>("publish_freq", 100.0);
+        this->declare_parameter<double>("publish_freq", 10.0);
         this->declare_parameter<std::vector<double>>("flange_T_ee_translation", std::vector<double>{0.0, 0.0, 0.0});
         this->declare_parameter<std::vector<double>>("flange_T_ee_rotation", std::vector<double>{1.0, 0.0, 0.0, 0.0});
         this->declare_parameter<bool>("use_demo", false);
@@ -307,31 +342,46 @@ class JointPositionsBridge : public rclcpp_lifecycle::LifecycleNode {
         joint_max_limits= panda_constants::joint_max_limits;
         velocity_limits= panda_constants::velocity_limits;
 
+        // Create a dedicated callback group for RT subscription
+        rt_callback_group_ = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+
 
         rclcpp::SubscriptionOptions position_cmd_sub_options;
         position_cmd_sub_options.use_intra_process_comm = rclcpp::IntraProcessSetting::Enable;
+        position_cmd_sub_options.callback_group = rt_callback_group_;
 
         rclcpp::QoS position_cmd_qos(rclcpp::KeepLast(1));
-        position_cmd_qos.best_effort();
+        position_cmd_qos.reliable();
         position_cmd_qos.durability_volatile();
-
-        joint_positions_cmd_sub = this->create_subscription<JointState>(
+        joint_positions_cmd_sub = this->create_subscription<uclv_panda_interfaces::msg::JointsCommandedPositions>(
           "/panda/joint_position_command", position_cmd_qos,
-          [this](const JointState::SharedPtr msg) {
+          [this](const uclv_panda_interfaces::msg::JointsCommandedPositions::SharedPtr msg) {
             cmd_debug = *msg;
             cmd_debug.header.stamp = this->now();
-            // cmd_debug_pub->tryPublish(cmd_debug);
-            int write_idx = 1 - active_cmd_idx.load(std::memory_order_acquire);
-            for (size_t i = 0; i < 7; i++) {
-              commanded_positions_buffers[write_idx][i] = msg->position[i];
-            }
-            active_cmd_idx.store(write_idx, std::memory_order_release);
+            cmd_debug_pub->try_publish(cmd_debug);
+
+            command_queue_mutex.lock();
+            command_queue.push(msg->positions);
+            command_queue_mutex.unlock();
             last_cmd_time = this->now();
 
             have_cmd = true;
           },
           position_cmd_sub_options);
 
+        // Start a dedicated thread to spin the RT callback group
+        rt_spin_thread_ = std::thread([this]() {
+          struct sched_param param;
+          param.sched_priority = 95;
+          pthread_t tid = pthread_self();
+          pthread_setschedparam(tid, SCHED_FIFO, &param);
+          rclcpp::ExecutorOptions options;
+          rclcpp::executors::SingleThreadedExecutor exec(options);
+          exec.add_callback_group(rt_callback_group_, this->get_node_base_interface());
+          while (rclcpp::ok()) {
+            exec.spin_some();
+          }
+        });
 
         robot_pose_pub_computed = std::make_shared<realtime_tools::RealtimePublisher<geometry_msgs::msg::PoseStamped>>(
             this->create_publisher<geometry_msgs::msg::PoseStamped>(panda_interface_names::panda_pose_state_topic_name + "_computed_ee",
@@ -346,8 +396,12 @@ class JointPositionsBridge : public rclcpp_lifecycle::LifecycleNode {
             panda_interface_names::DEFAULT_TOPIC_QOS()));
 
         //debug
-        cmd_debug_pub =std::make_shared<realtime_tools::RealtimePublisher<JointState>>(
-            this->create_publisher<JointState>("cmd_debug",
+        cmd_debug_pub =std::make_shared<realtime_tools::RealtimePublisher<uclv_panda_interfaces::msg::JointsCommandedPositions>>(
+            this->create_publisher<uclv_panda_interfaces::msg::JointsCommandedPositions>("cmd_debug",
+            panda_interface_names::DEFAULT_TOPIC_QOS()));
+
+        prev_cmd_pub =std::make_shared<realtime_tools::RealtimePublisher<uclv_panda_interfaces::msg::JointsCommandedPositions>>(
+            this->create_publisher<uclv_panda_interfaces::msg::JointsCommandedPositions>("cmd_debug_prev",
             panda_interface_names::DEFAULT_TOPIC_QOS()));
     
     }
@@ -357,6 +411,9 @@ class JointPositionsBridge : public rclcpp_lifecycle::LifecycleNode {
       start_flag.store(false);
       if (control_thread.joinable()) {
         control_thread.join();
+      }
+      if (rt_spin_thread_.joinable()) {
+      rt_spin_thread_.join();
       }
     }
 
@@ -404,14 +461,6 @@ class JointPositionsBridge : public rclcpp_lifecycle::LifecycleNode {
         
         initial_pos_ = panda_franka->readOnce().q; //used for the control loop
         initial_q_ = panda_franka->readOnce().q; //used for demo control
-
-        //set the initial commanded positions to the current robot positions to avoid jumps at the start of the control
-        for (size_t i = 0; i < 7; i++) {
-          commanded_positions_buffers[0][i] = initial_pos_[i];
-          commanded_positions_buffers[1][i] = initial_pos_[i];
-        }
-        active_cmd_idx.store(0);
-
         
 
         joint_state_to_pub.position.resize(7);
@@ -419,11 +468,10 @@ class JointPositionsBridge : public rclcpp_lifecycle::LifecycleNode {
         joint_state_to_pub.effort.resize(7);
         joint_state_to_pub.name = std::vector<std::string>{"joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"};
       
-        //adesso viene definita la callback che viene eseguita ad ogni ciclo di controllo e mandata alla funzione control della libreria franka
         positions_bridge_callback = [this](const franka::RobotState &robot_state,
                                            franka::Duration dt) -> franka::JointPositions {
           
-          std::array<double, 7UL> pos_cmd{};
+          
 
           //Aggiorno lo stato del robot
           {
@@ -434,11 +482,13 @@ class JointPositionsBridge : public rclcpp_lifecycle::LifecycleNode {
 
           // Sincronizza alla prima iterazione con la posizione attuale del robot
           if (!is_initialized) {
-            for (size_t i = 0; i < 7; i++) {
-              commanded_positions_buffers[0][i] = robot_state.q[i];
-              commanded_positions_buffers[1][i] = robot_state.q[i];
+            command_queue.push(robot_state.q);
+            for(int i = 0; i < 7; i++) {
+             prev_command[i] = robot_state.q[i];
             }
-            active_cmd_idx.store(0);
+            input_old = robot_state.q;
+            output_old = robot_state.q;
+            is_initialized = true;
           }
 
 
@@ -485,9 +535,32 @@ class JointPositionsBridge : public rclcpp_lifecycle::LifecycleNode {
             start_flag.store(false);
             return franka::MotionFinished(franka::JointPositions(pos_cmd));
           }else {
-            // Leggi sempre dal buffer attivo
-            int read_idx = active_cmd_idx.load(std::memory_order_acquire);
-            pos_cmd = commanded_positions_buffers[read_idx];
+            command_queue_mutex.lock();
+            pos_cmd = command_queue.front();
+            if (command_queue.size() > 1) {
+              command_queue.pop();
+            }
+            command_queue_mutex.unlock();
+
+            // pos_cmd_smoothed = first_order_filter(pos_cmd, input_old, output_old);
+            // output_old = pos_cmd_smoothed;
+            // input_old = pos_cmd;
+
+            elapsed_time_quintic += dt.toSec();
+            //interpolo usando un quintico
+            for (size_t i = 0; i < 7; ++i) {
+                pos_cmd_smoothed[i] = quintic(prev_command[i], pos_cmd[i], elapsed_time_quintic, 0.005); // 0.005 second interpolation time
+              }
+            if(elapsed_time_quintic >= 0.005) {
+              elapsed_time_quintic = 0.0;
+              for (size_t i = 0; i < 7; ++i) {
+                prev_command[i] = pos_cmd[i];
+              }
+            }
+            
+            
+
+
           }
 
           // Watchdog: stop if no recent command but first command received
@@ -503,85 +576,69 @@ class JointPositionsBridge : public rclcpp_lifecycle::LifecycleNode {
             }
           }
 
-          // Inizializza prev_command alla prima iterazione con lo stato robot attuale
-          if (!is_initialized) {
-            for (size_t i = 0; i < 7; i++) {
-              prev_command[i] = robot_state.q[i];
-            }
-            is_initialized = true;
-          }
-
-          try{
-            for (size_t i = 0; i < 7; i++) {
-              if(dt.toSec()!=0.0) //Protezione contro divisioni per zero in caso di problemi con il tempo di controllo
-              {
-                if (std::abs((pos_cmd[i]-prev_command[i])/dt.toSec()) > velocity_limits[i]*joint_speed_safe_limit_factor) {
-                RCLCPP_WARN_STREAM_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
-                  "Commanded joint position " << pos_cmd[i]
-                  << " exceeds safe limit of " << velocity_limits[i]*joint_speed_safe_limit_factor);
-                  if(!clamp)
-                  {             
-                    pos_cmd = robot_state.q;
-                    panda_franka->stop();
-                    start_flag.store(false);
-                    return franka::MotionFinished(franka::JointPositions(pos_cmd));
-                  }
-                }
-              }
-              if(std::isnan(pos_cmd[i]) || std::isinf(pos_cmd[i])) {
-                RCLCPP_ERROR_STREAM(this->get_logger(),
-                  "Commanded joint position " << pos_cmd[i]
-                  << " is not a finite number. Stopping control.");
-                  pos_cmd = robot_state.q;
-                  panda_franka->stop();
-                  start_flag.store(false);
-                  return franka::MotionFinished(franka::JointPositions(pos_cmd));
-              }
-            }
-            if (robot_state.O_T_EE[14] <= critical_height) { 
-              RCLCPP_ERROR_STREAM(this->get_logger(),
-                                  "Height of the end affector wrt base under "
-                                  "allowed value " << critical_height << "m");
-              panda_franka->stop();
-              start_flag.store(false);
-              return franka::MotionFinished(franka::JointPositions(robot_state.q));
-            }
-          } catch (const std::exception &e) {
-            RCLCPP_ERROR_STREAM(this->get_logger(), "Error in safety check: " << e.what());
-            panda_franka->stop();
-            start_flag.store(false);
-            return franka::MotionFinished(franka::JointPositions(robot_state.q));
-          }
-
-          // //Convert to Eigen vector for clamping
-          // Eigen::Vector<double, 7> pos_cmd_eigen;
-          // for (size_t i = 0; i < 7; i++) {
-          //   pos_cmd_eigen[i] = pos_cmd[i];
+          // try{
+          //   for (size_t i = 0; i < 7; i++) {
+          //     if(dt.toSec()!=0.0) //Protezione contro divisioni per zero in caso di problemi con il tempo di controllo
+          //     {
+          //       if (std::abs((pos_cmd[i]-prev_command[i])/dt.toSec()) > velocity_limits[i]*joint_speed_safe_limit_factor) {
+          //       RCLCPP_WARN_STREAM_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+          //         "Commanded joint position " << pos_cmd[i]
+          //         << " exceeds safe limit of " << velocity_limits[i]*joint_speed_safe_limit_factor);
+          //         if(!clamp)
+          //         {             
+          //           pos_cmd = robot_state.q;
+          //           panda_franka->stop();
+          //           start_flag.store(false);
+          //           return franka::MotionFinished(franka::JointPositions(pos_cmd));
+          //         }
+          //       }
+          //     }
+          //     if(std::isnan(pos_cmd[i]) || std::isinf(pos_cmd[i])) {
+          //       RCLCPP_ERROR_STREAM(this->get_logger(),
+          //         "Commanded joint position " << pos_cmd[i]
+          //         << " is not a finite number. Stopping control.");
+          //         pos_cmd = robot_state.q;
+          //         panda_franka->stop();
+          //         start_flag.store(false);
+          //         return franka::MotionFinished(franka::JointPositions(pos_cmd));
+          //     }
+          //   }
+          //   if (robot_state.O_T_EE[14] <= critical_height) { 
+          //     RCLCPP_ERROR_STREAM(this->get_logger(),
+          //                         "Height of the end affector wrt base under "
+          //                         "allowed value " << critical_height << "m");
+          //     panda_franka->stop();
+          //     start_flag.store(false);
+          //     return franka::MotionFinished(franka::JointPositions(robot_state.q));
+          //   }
+          // } catch (const std::exception &e) {
+          //   RCLCPP_ERROR_STREAM(this->get_logger(), "Error in safety check: " << e.what());
+          //   panda_franka->stop();
+          //   start_flag.store(false);
+          //   return franka::MotionFinished(franka::JointPositions(robot_state.q));
           // }
 
-          if(dt.toSec()!=0.0)
-          {
-            for(int i=0; i<7; i++)
-            {
-              pos_cmd[i] = franka::lowpassFilter(dt.toSec(), pos_cmd[i], prev_command[i], joints_cutoff_freq);
-              prev_command[i] = pos_cmd[i];
-            }
-          }
-          // Se dt è 0 o non inizializzato, mantieni il comando corrente
           
+          // if(dt.toSec()!=0.0)
+          // {
+          //   for(int i=0; i<7; i++)
+          //   {
+          //     pos_cmd[i] = franka::lowpassFilter(dt.toSec(), pos_cmd[i], prev_command[i], joints_cutoff_freq);
+          //     prev_command[i] = pos_cmd[i];
+          //   }
+          // }
+
+          if (prev_cmd_pub->trylock()) {
+            prev_cmd_pub->msg_.header.stamp = this->now();
+            prev_cmd_pub->msg_.positions = pos_cmd_smoothed;
+            prev_cmd_pub->unlockAndPublish();
+          }
+
           //Clamp control input if enabled
           if (clamp) {
             clamp_control(pos_cmd);
           }
-          
-
-          // //Convert back to std::array
-          // for (size_t i = 0; i < 7; i++) {
-          //   pos_cmd[i] = pos_cmd_eigen[i];
-          // }
-          // prev_command = pos_cmd_eigen;
-
-          return franka::JointPositions(pos_cmd);
+          return franka::JointPositions(initial_pos_);
         };
 
       } catch (const franka::Exception &e) {
@@ -615,6 +672,13 @@ class JointPositionsBridge : public rclcpp_lifecycle::LifecycleNode {
         try {
 
           std::thread{[this](){
+            //set the priority of this thread very low
+              if (realtime_tools::configure_sched_fifo(10)) {
+                RCLCPP_INFO(this->get_logger(), "Debug thread set to low priority");
+              } else {
+                RCLCPP_ERROR(this->get_logger(),"Failed to set debug thread priority");
+              }
+
             // Debug thread
             using namespace std::chrono_literals;
             RCLCPP_INFO(this->get_logger(), "Starting debug thread...");
@@ -649,29 +713,25 @@ class JointPositionsBridge : public rclcpp_lifecycle::LifecycleNode {
                 current_pose_read.header.frame_id = "panda_link0";
                 current_pose_read.pose = current_pose;
               }
-              if (joint_states_pub->trylock()) {
+              if (joint_states_pub->trylock()) { 
                   joint_states_pub->msg_ = joint_state_to_pub;
                 joint_states_pub->unlockAndPublish();
               }
-              if (robot_pose_pub_computed->trylock()) {
-                robot_pose_pub_computed->msg_ = current_pose_computed;
-                robot_pose_pub_computed->unlockAndPublish();
-              }
-              if (robot_pose_pub_read->trylock()) {
-                robot_pose_pub_read->msg_ = current_pose_read;
-                robot_pose_pub_read->unlockAndPublish();
-              }
-
-              // if (cmd_debug_pub->trylock()) {
-              //   cmd_debug_pub->msg_ = cmd_debug;
-              //   cmd_debug_pub->unlockAndPublish();
+              // if (robot_pose_pub_computed->trylock()) {
+              //   robot_pose_pub_computed->msg_ = current_pose_computed;
+              //   robot_pose_pub_computed->unlockAndPublish();
               // }
+              // if (robot_pose_pub_read->trylock()) {
+              //   robot_pose_pub_read->msg_ = current_pose_read;
+              //   robot_pose_pub_read->unlockAndPublish();
+              // }
+
 
               rate.sleep();
             }
           }}.detach();
           //Set real time priority
-          if (realtime_tools::configure_sched_fifo(99)) {
+          if (realtime_tools::configure_sched_fifo(30)) {
             RCLCPP_INFO(this->get_logger(), "Set real time priority");
           } else {
             RCLCPP_ERROR(this->get_logger(),"Real time priority not set, shutting down");
@@ -680,9 +740,9 @@ class JointPositionsBridge : public rclcpp_lifecycle::LifecycleNode {
           }
           // Start control
           //debug print
-          RCLCPP_INFO(this->get_logger(), "Starting control with real time robot...");
+          RCLCPP_INFO(this->get_logger(), "Starting control with real robot...");
          
-          //auto time_= cmd_debug.header.stamp-this->now();
+          
           panda_franka->control(positions_bridge_callback);
 
         } catch (const franka::Exception &ex) {

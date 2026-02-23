@@ -16,6 +16,7 @@ find_package(sensor_msgs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "action/JointTraj.action"
+  "msg/JointsCommandedPositions.msg"
   DEPENDENCIES tf2_msgs geometry_msgs std_msgs sensor_msgs
 )
 
