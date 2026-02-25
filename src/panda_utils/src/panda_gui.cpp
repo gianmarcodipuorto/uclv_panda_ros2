@@ -1,4 +1,3 @@
-
 #include <QTextEdit>
 #include <QApplication>
 #include <QWidget>
@@ -16,171 +15,256 @@
 
 
 class PandaGui : public QWidget {
-	       void onStopNode() {
-		       QString nodeName = "panda_joint_velocities_bridge";
-		       if (nodeProcess && nodeProcess->state() == QProcess::Running) {
-			       QProcess::execute("pkill", QStringList{"-f", "panda_joint_velocities_bridge"});
-				   nodeProcess->kill();
-			       nodeProcess->waitForFinished(2000);
-			       outputEdit->append("[INFO] " + nodeName + " stopped.");
-		       } else {
-			       outputEdit->append("[WARN] " + nodeName + " is not running.");
-		       }
-	       }
 	Q_OBJECT
 public:
 	PandaGui(QWidget *parent = nullptr) : QWidget(parent) {
-		auto *mainLayout = new QVBoxLayout(this);
-		QLabel *controllerLabel = new QLabel("panda_joint_velocities_controller", this);
-		mainLayout->addWidget(controllerLabel);
+    // --- Layout principale orizzontale ---
+    auto *mainHLayout = new QHBoxLayout(this);
+    this->setLayout(mainHLayout);
 
-		// Dynamic parameter selection menu
-		auto *paramMenuLayout = new QVBoxLayout();
-		paramCombo = new QComboBox(this);
-		paramCombo->addItems({
-			"robot_ip", "safe_joint_speed_factor", "clamp", "show_details", "publish_freq",
-			"flange_T_ee_translation", "flange_T_ee_rotation", "F_x_Cload", "load", "load_inertia", "critical_height", "command_timeout_ms"
-		});
-		paramMenuLayout->addWidget(new QLabel("Select parameter to edit:", this));
-		paramMenuLayout->addWidget(paramCombo);
+    // --- Colonna sinistra: pulsanti in verticale ---
+    auto *buttonVLayout = new QVBoxLayout();
+	buttonVLayout->setSpacing(30);
+	buttonVLayout->setContentsMargins(20, 20, 20, 20);
 
-		// Stacked widget for parameter input
-		paramStack = new QStackedWidget(this);
 
-		// robot_ip
-		QWidget *robotIpPage = new QWidget(this);
-		auto *robotIpLayout = new QHBoxLayout(robotIpPage);
-		robotIpEdit = new QLineEdit("10.224.20.198", this);
-		robotIpLayout->addWidget(new QLabel("Robot IP:", this));
-		robotIpLayout->addWidget(robotIpEdit);
-		paramStack->addWidget(robotIpPage);
+    startButton = new QPushButton("Start Node", this);
+	startButton->setStyleSheet(
+		"QPushButton {"
+		"background-color: #B0FF00;"
+		"color: black;"
+		"font-weight: bold;"
+		"font-size: 18px;"
+		"border-radius: 8px;"
+		"min-width: 200px;"
+		"min-height: 60px;"
+		"max-width: 400px;"
+		"border: 2px solid #333;"
+		"}"
+		"QPushButton:pressed { background-color: rgb(212, 236, 150); }"
+	);
+    configureButton = new QPushButton("Configure", this);
+	configureButton->setStyleSheet(
+		"QPushButton {"
+		"background-color: #B0FF00;"
+		"color: black;"
+		"font-weight: bold;"
+		"font-size: 18px;"
+		"border-radius: 8px;"
+		"min-width: 200px;"
+		"min-height: 60px;"
+		"max-width: 400px;"
+		"border: 2px solid #333;"
+		"}"
+		"QPushButton:pressed { background-color: rgb(212, 236, 150); }"
+	);
+    activateButton = new QPushButton("Activate", this);
+	activateButton->setStyleSheet(
+		"QPushButton {"
+		"background-color: #B0FF00;"
+		"color: black;"
+		"font-weight: bold;"
+		"font-size: 18px;"
+		"border-radius: 8px;"
+		"min-width: 200px;"
+		"min-height: 60px;"
+		"max-width: 400px;"
+		"border: 2px solid #333;"
+		"}"
+		"QPushButton:pressed { background-color: rgb(212, 236, 150); }"
+	);
+    dactivateButton = new QPushButton("Deactivate", this);
+    dactivateButton->setStyleSheet(
+		"QPushButton {"
+		"background-color: #dc3939;"
+		"color: black;"
+		"font-weight: bold;"
+		"font-size: 18px;"
+		"border-radius: 8px;"
+		"min-width: 200px;"
+		"min-height: 60px;"
+		"max-width: 400px;"
+		"border: 2px solid #333;"
+		"}"
+		"QPushButton:pressed { background-color: rgb(212, 236, 150); }"
+    );
+    stopButton = new QPushButton("Stop Controller", this);
+    stopButton->setStyleSheet(
+        "QPushButton {"
+        "background-color: #dc3939;"
+        "color: black;"
+        "font-weight: bold;"
+        "font-size: 18px;"
+        "border-radius: 8px;"
+        "min-width: 200px;"
+        "min-height: 60px;"
+        "max-width: 400px;"
+        "border: 2px solid #333;"
+        "}"
+        "QPushButton:pressed { background-color: rgb(255, 179, 179); }"
+    );
 
-		// safe_joint_speed_factor
-		QWidget *speedFactorPage = new QWidget(this);
-		auto *speedFactorLayout = new QHBoxLayout(speedFactorPage);
-		speedFactorEdit = new QLineEdit("0.9", this);
-		speedFactorLayout->addWidget(new QLabel("Safe Speed Factor:", this));
-		speedFactorLayout->addWidget(speedFactorEdit);
-		paramStack->addWidget(speedFactorPage);
+    buttonVLayout->addWidget(startButton);
+    buttonVLayout->addWidget(configureButton);
+    buttonVLayout->addWidget(activateButton);
+    buttonVLayout->addWidget(dactivateButton);
+    buttonVLayout->addWidget(stopButton);
+    buttonVLayout->addStretch();  // Spinge i pulsanti in alto
 
-		// clamp
-		QWidget *clampPage = new QWidget(this);
-		auto *clampLayout = new QHBoxLayout(clampPage);
-		clampCheck = new QCheckBox(this);
-		clampCheck->setChecked(true);
-		clampLayout->addWidget(new QLabel("Clamp:", this));
-		clampLayout->addWidget(clampCheck);
-		paramStack->addWidget(clampPage);
+    auto *buttonWidget = new QWidget(this);
+    buttonWidget->setLayout(buttonVLayout);
+    mainHLayout->addWidget(buttonWidget, 0);
 
-		// show_details
-		QWidget *showDetailsPage = new QWidget(this);
-		auto *showDetailsLayout = new QHBoxLayout(showDetailsPage);
-		showDetailsCheck = new QCheckBox(this);
-		showDetailsCheck->setChecked(false);
-		showDetailsLayout->addWidget(new QLabel("Show Details:", this));
-		showDetailsLayout->addWidget(showDetailsCheck);
-		paramStack->addWidget(showDetailsPage);
+    // --- Colonna destra: parametri e output in verticale ---
+    auto *rightVLayout = new QVBoxLayout();
 
-		// publish_freq
-		QWidget *publishFreqPage = new QWidget(this);
-		auto *publishFreqLayout = new QHBoxLayout(publishFreqPage);
-		publishFreqEdit = new QLineEdit("100.0", this);
-		publishFreqLayout->addWidget(new QLabel("Publish Freq:", this));
-		publishFreqLayout->addWidget(publishFreqEdit);
-		paramStack->addWidget(publishFreqPage);
+    // Titolo controller sulla destra sopra ai parametri
+    QLabel *controllerLabel = new QLabel("panda_joint_velocities_controller", this);
+    rightVLayout->addWidget(controllerLabel);
 
-		// flange_T_ee_translation
-		QWidget *flangeTransPage = new QWidget(this);
-		auto *flangeTransLayout = new QHBoxLayout(flangeTransPage);
-		flangeTransEdit = new QLineEdit("0.0,0.0,0.0", this);
-		flangeTransLayout->addWidget(new QLabel("Flange->EE Translation:", this));
-		flangeTransLayout->addWidget(flangeTransEdit);
-		paramStack->addWidget(flangeTransPage);
+    // --- Parametri: menu + stack ---
+    auto *paramMenuLayout = new QVBoxLayout();
+    paramCombo = new QComboBox(this);
+    paramCombo->addItems({
+        "robot_ip", "safe_joint_speed_factor", "clamp", "show_details", "publish_freq",
+        "flange_T_ee_translation", "flange_T_ee_rotation", "F_x_Cload", "load", "load_inertia", "critical_height", "command_timeout_ms"
+    });
+    paramMenuLayout->addWidget(new QLabel("Select parameter to edit:", this));
+    paramMenuLayout->addWidget(paramCombo);
 
-		// flange_T_ee_rotation
-		QWidget *flangeRotPage = new QWidget(this);
-		auto *flangeRotLayout = new QHBoxLayout(flangeRotPage);
-		flangeRotEdit = new QLineEdit("1.0,0.0,0.0,0.0", this);
-		flangeRotLayout->addWidget(new QLabel("Flange->EE Rotation (quat):", this));
-		flangeRotLayout->addWidget(flangeRotEdit);
-		paramStack->addWidget(flangeRotPage);
+    paramStack = new QStackedWidget(this);
 
-		// F_x_Cload
-		QWidget *fxCloadPage = new QWidget(this);
-		auto *fxCloadLayout = new QHBoxLayout(fxCloadPage);
-		fxCloadEdit = new QLineEdit("0.0,0.0,0.0", this);
-		fxCloadLayout->addWidget(new QLabel("F_x_Cload:", this));
-		fxCloadLayout->addWidget(fxCloadEdit);
-		paramStack->addWidget(fxCloadPage);
+    // robot_ip
+    QWidget *robotIpPage = new QWidget(this);
+    auto *robotIpLayout = new QHBoxLayout(robotIpPage);
+    robotIpEdit = new QLineEdit("10.224.20.198", this);
+    robotIpLayout->addWidget(new QLabel("Robot IP:", this));
+    robotIpLayout->addWidget(robotIpEdit);
+    paramStack->addWidget(robotIpPage);
 
-		// load
-		QWidget *loadPage = new QWidget(this);
-		auto *loadLayout = new QHBoxLayout(loadPage);
-		loadEdit = new QLineEdit("0.0", this);
-		loadLayout->addWidget(new QLabel("Load:", this));
-		loadLayout->addWidget(loadEdit);
-		paramStack->addWidget(loadPage);
+    // safe_joint_speed_factor
+    QWidget *speedFactorPage = new QWidget(this);
+    auto *speedFactorLayout = new QHBoxLayout(speedFactorPage);
+    speedFactorEdit = new QLineEdit("0.9", this);
+    speedFactorLayout->addWidget(new QLabel("Safe Speed Factor:", this));
+    speedFactorLayout->addWidget(speedFactorEdit);
+    paramStack->addWidget(speedFactorPage);
 
-		// load_inertia
-		QWidget *loadInertiaPage = new QWidget(this);
-		auto *loadInertiaLayout = new QHBoxLayout(loadInertiaPage);
-		loadInertiaEdit = new QLineEdit("0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0", this);
-		loadInertiaLayout->addWidget(new QLabel("Load Inertia:", this));
-		loadInertiaLayout->addWidget(loadInertiaEdit);
-		paramStack->addWidget(loadInertiaPage);
+    // clamp
+    QWidget *clampPage = new QWidget(this);
+    auto *clampLayout = new QHBoxLayout(clampPage);
+    clampCheck = new QCheckBox(this);
+    clampCheck->setChecked(true);
+    clampLayout->addWidget(new QLabel("Clamp:", this));
+    clampLayout->addWidget(clampCheck);
+    paramStack->addWidget(clampPage);
 
-		// critical_height
-		QWidget *criticalHeightPage = new QWidget(this);
-		auto *criticalHeightLayout = new QHBoxLayout(criticalHeightPage);
-		criticalHeightEdit = new QLineEdit("0.1", this);
-		criticalHeightLayout->addWidget(new QLabel("Critical Height:", this));
-		criticalHeightLayout->addWidget(criticalHeightEdit);
-		paramStack->addWidget(criticalHeightPage);
+    // show_details
+    QWidget *showDetailsPage = new QWidget(this);
+    auto *showDetailsLayout = new QHBoxLayout(showDetailsPage);
+    showDetailsCheck = new QCheckBox(this);
+    showDetailsCheck->setChecked(false);
+    showDetailsLayout->addWidget(new QLabel("Show Details:", this));
+    showDetailsLayout->addWidget(showDetailsCheck);
+    paramStack->addWidget(showDetailsPage);
 
-		// command_timeout_ms
-		QWidget *timeoutPage = new QWidget(this);
-		auto *timeoutLayout = new QHBoxLayout(timeoutPage);
-		timeoutEdit = new QLineEdit("10000.0", this);
-		timeoutLayout->addWidget(new QLabel("Command Timeout (ms):", this));
-		timeoutLayout->addWidget(timeoutEdit);
-		paramStack->addWidget(timeoutPage);
+    // publish_freq
+    QWidget *publishFreqPage = new QWidget(this);
+    auto *publishFreqLayout = new QHBoxLayout(publishFreqPage);
+    publishFreqEdit = new QLineEdit("100.0", this);
+    publishFreqLayout->addWidget(new QLabel("Publish Freq:", this));
+    publishFreqLayout->addWidget(publishFreqEdit);
+    paramStack->addWidget(publishFreqPage);
 
-		paramMenuLayout->addWidget(paramStack);
-		mainLayout->addLayout(paramMenuLayout);
+    // flange_T_ee_translation
+    QWidget *flangeTransPage = new QWidget(this);
+    auto *flangeTransLayout = new QHBoxLayout(flangeTransPage);
+    flangeTransEdit = new QLineEdit("0.0,0.0,0.0", this);
+    flangeTransLayout->addWidget(new QLabel("Flange->EE Translation:", this));
+    flangeTransLayout->addWidget(flangeTransEdit);
+    paramStack->addWidget(flangeTransPage);
 
-		connect(paramCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), paramStack, &QStackedWidget::setCurrentIndex);
+    // flange_T_ee_rotation
+    QWidget *flangeRotPage = new QWidget(this);
+    auto *flangeRotLayout = new QHBoxLayout(flangeRotPage);
+    flangeRotEdit = new QLineEdit("1.0,0.0,0.0,0.0", this);
+    flangeRotLayout->addWidget(new QLabel("Flange->EE Rotation (quat):", this));
+    flangeRotLayout->addWidget(flangeRotEdit);
+    paramStack->addWidget(flangeRotPage);
 
-		auto *buttonLayout = new QHBoxLayout();
-		startButton = new QPushButton("Start Node", this);
-		configureButton = new QPushButton("Configure", this);
-		activateButton = new QPushButton("Activate", this);
-		dactivateButton = new QPushButton("Deactivate", this);
+    // F_x_Cload
+    QWidget *fxCloadPage = new QWidget(this);
+    auto *fxCloadLayout = new QHBoxLayout(fxCloadPage);
+    fxCloadEdit = new QLineEdit("0.0,0.0,0.0", this);
+    fxCloadLayout->addWidget(new QLabel("F_x_Cload:", this));
+    fxCloadLayout->addWidget(fxCloadEdit);
+    paramStack->addWidget(fxCloadPage);
 
-			   buttonLayout->addWidget(startButton);
-			   buttonLayout->addWidget(configureButton);
-			   buttonLayout->addWidget(activateButton);
-			   buttonLayout->addWidget(dactivateButton);
-			   stopButton = new QPushButton("Stop Controller", this);
-			   buttonLayout->addWidget(stopButton);
-		mainLayout->addLayout(buttonLayout);
+    // load
+    QWidget *loadPage = new QWidget(this);
+    auto *loadLayout = new QHBoxLayout(loadPage);
+    loadEdit = new QLineEdit("0.0", this);
+    loadLayout->addWidget(new QLabel("Load:", this));
+    loadLayout->addWidget(loadEdit);
+    paramStack->addWidget(loadPage);
 
-		outputEdit = new QTextEdit(this);
-		outputEdit->setReadOnly(true);
-		mainLayout->addWidget(outputEdit);
+    // load_inertia
+    QWidget *loadInertiaPage = new QWidget(this);
+    auto *loadInertiaLayout = new QHBoxLayout(loadInertiaPage);
+    loadInertiaEdit = new QLineEdit("0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0", this);
+    loadInertiaLayout->addWidget(new QLabel("Load Inertia:", this));
+    loadInertiaLayout->addWidget(loadInertiaEdit);
+    paramStack->addWidget(loadInertiaPage);
 
-		nodeProcess = new QProcess(this);
+    // critical_height
+    QWidget *criticalHeightPage = new QWidget(this);
+    auto *criticalHeightLayout = new QHBoxLayout(criticalHeightPage);
+    criticalHeightEdit = new QLineEdit("0.1", this);
+    criticalHeightLayout->addWidget(new QLabel("Critical Height:", this));
+    criticalHeightLayout->addWidget(criticalHeightEdit);
+    paramStack->addWidget(criticalHeightPage);
 
-			   if (startButton) connect(startButton, &QPushButton::clicked, this, &PandaGui::onStartNode);
-			   if (configureButton) connect(configureButton, &QPushButton::clicked, this, &PandaGui::onConfigure);
-			   if (activateButton) connect(activateButton, &QPushButton::clicked, this, &PandaGui::onActivate);
-			   if (dactivateButton) connect(dactivateButton, &QPushButton::clicked, this, &PandaGui::onDeactivate);
-			   if (stopButton) connect(stopButton, &QPushButton::clicked, this, &PandaGui::onStopNode);
+    // command_timeout_ms
+    QWidget *timeoutPage = new QWidget(this);
+    auto *timeoutLayout = new QHBoxLayout(timeoutPage);
+    timeoutEdit = new QLineEdit("10000.0", this);
+    timeoutLayout->addWidget(new QLabel("Command Timeout (ms):", this));
+    timeoutLayout->addWidget(timeoutEdit);
+    paramStack->addWidget(timeoutPage);
 
-		if (nodeProcess) {
-			connect(nodeProcess, &QProcess::readyReadStandardOutput, this, &PandaGui::onNodeOutput);
-			connect(nodeProcess, &QProcess::readyReadStandardError, this, &PandaGui::onNodeError);
-		}
-	}
+    paramMenuLayout->addWidget(paramStack);
+
+    // Widget dei parametri tutto insieme
+    auto *paramWidget = new QWidget(this);
+    paramWidget->setLayout(paramMenuLayout);
+    rightVLayout->addWidget(paramWidget);
+
+    // --- Output ---
+    outputEdit = new QTextEdit(this);
+    outputEdit->setReadOnly(true);
+    rightVLayout->addWidget(outputEdit);
+
+    // Colonna destra come QWidget
+    auto *rightWidget = new QWidget(this);
+    rightWidget->setLayout(rightVLayout);
+    mainHLayout->addWidget(rightWidget, 1);
+
+    // --- connessioni ---
+    connect(paramCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), paramStack, &QStackedWidget::setCurrentIndex);
+
+    nodeProcess = new QProcess(this);
+
+    if (startButton) connect(startButton, &QPushButton::clicked, this, &PandaGui::onStartNode);
+    if (configureButton) connect(configureButton, &QPushButton::clicked, this, &PandaGui::onConfigure);
+    if (activateButton) connect(activateButton, &QPushButton::clicked, this, &PandaGui::onActivate);
+    if (dactivateButton) connect(dactivateButton, &QPushButton::clicked, this, &PandaGui::onDeactivate);
+    if (stopButton) connect(stopButton, &QPushButton::clicked, this, &PandaGui::onStopNode);
+
+    if (nodeProcess) {
+        connect(nodeProcess, &QProcess::readyReadStandardOutput, this, &PandaGui::onNodeOutput);
+        connect(nodeProcess, &QProcess::readyReadStandardError, this, &PandaGui::onNodeError);
+    }
+}
 
 protected:
     void closeEvent(QCloseEvent *event) override {
@@ -307,11 +391,23 @@ private:
 		QProcess::execute("bash", QStringList{"-c", command});
 		QMessageBox::information(this, "Deactivate", nodeName + " deactivated.");
 	}
+	void onStopNode() {
+	QString nodeName = "panda_joint_velocities_bridge";
+	if (nodeProcess && nodeProcess->state() == QProcess::Running) {
+		QProcess::execute("pkill", QStringList{"-f", "panda_joint_velocities_bridge"});
+		nodeProcess->kill();
+		nodeProcess->waitForFinished(2000);
+		outputEdit->append("[INFO] " + nodeName + " stopped.");
+	} else {
+		outputEdit->append("[WARN] " + nodeName + " is not running.");
+		}
+	}
 };
 
 int main(int argc, char *argv[]) {
 	QApplication app(argc, argv);
 	PandaGui gui;
+	
 	gui.setWindowTitle("Panda Controller GUI");
 	gui.resize(800, 450);
 	gui.show();

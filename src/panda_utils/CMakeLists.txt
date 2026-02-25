@@ -23,6 +23,9 @@ find_package(geometry_msgs REQUIRED)
 find_package(rclcpp_components REQUIRED)
 find_package(Qt5 REQUIRED COMPONENTS Core Widgets)
 
+# Python support for GUI
+find_package(ament_cmake_python REQUIRED)
+
 #Include Qt5
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
@@ -73,13 +76,20 @@ install(TARGETS
   simple_velocity_traj
   panda_gui
 
+
   DESTINATION lib/${PROJECT_NAME}
 )
 
 install(
   DIRECTORY
     launch/
+    gui/
   DESTINATION share/${PROJECT_NAME}/launch
+)
+
+install(PROGRAMS
+  gui/panda_gui.py
+  DESTINATION lib/${PROJECT_NAME}
 )
 
 ament_export_include_directories(include)
