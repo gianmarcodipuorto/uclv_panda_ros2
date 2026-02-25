@@ -21,11 +21,22 @@ find_package(realtime_tools REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(rclcpp_components REQUIRED)
+find_package(Qt5 REQUIRED COMPONENTS Core Widgets)
+
+#Include Qt5
+set(CMAKE_AUTOMOC ON)
+set(CMAKE_AUTOUIC ON)
+set(CMAKE_AUTORCC ON)
 
 include_directories(
   include
   /opt/ros/jazzy/include
   # ~/libfranka/include/
+)
+
+add_executable(panda_gui  src/panda_gui.cpp)
+ament_target_dependencies(panda_gui rclcpp rclcpp_lifecycle std_srvs geometry_msgs sensor_msgs)
+target_link_libraries(panda_gui Qt5::Core Qt5::Widgets
 )
 
 add_executable(panda_joint_velocities_bridge ./src/panda_joint_velocities_bridge.cpp ./src/constants.cpp)
@@ -60,6 +71,7 @@ install(TARGETS
   panda_cartesian_position_bridge
   simple_joints_traj
   simple_velocity_traj
+  panda_gui
 
   DESTINATION lib/${PROJECT_NAME}
 )

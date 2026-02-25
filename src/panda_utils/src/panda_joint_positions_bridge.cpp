@@ -162,8 +162,8 @@ void print_initial_franka_state(const franka::RobotState state, const franka::Mo
 
     RCLCPP_INFO_STREAM_ONCE(logger, "Current pseudoinv: \n[" << jacobian_pinv << "]");
   }
-
 }
+
 
 Eigen::Matrix4d vectors_to_homogeneous(const std::vector<double>& translation_vec, const std::vector<double>& quaternion_vec) {
   Eigen::Vector3d translation(translation_vec[0], translation_vec[1], translation_vec[2]);
@@ -210,8 +210,6 @@ class JointPositionsBridge : public rclcpp_lifecycle::LifecycleNode {
     std::vector<double> flange_T_ee_translation{0,0,0.0}; //Traslazione tra flange e end effector
     std::vector<double> flange_T_ee_rotation{1,0,0,0}; //Rotazione tra flange
 
-    //std::mutex joint_state_mutex;
-    //sensor_msgs::msg::JointState::SharedPtr current_joint_config{nullptr};
 
     // Callback function for the FCI
     std::function<franka::JointPositions(const franka::RobotState &, franka::Duration)> positions_bridge_callback; //Callback for sending positions to the robot
@@ -258,10 +256,6 @@ class JointPositionsBridge : public rclcpp_lifecycle::LifecycleNode {
     bool have_cmd{false};
     double critical_height{0.1};
 
-    //buffer per il controllo
-    int read_idx = 0;
-    int write_idx = 0;
-
     // Demo control
     bool use_demo_{false};
     bool demo_initialized_{false};
@@ -269,19 +263,12 @@ class JointPositionsBridge : public rclcpp_lifecycle::LifecycleNode {
     double elapsed_time_{0.0};
 
     //comando vecchio
-    //Eigen::Vector<double, 7UL> prev_command{};
     std::array<double, 7UL> prev_command{};
     bool is_initialized = false;
 
     //queue
     std::queue<std::array<double, 7UL>> command_queue;
     std::mutex command_queue_mutex;
-
-
-    //quintic interpolation
-    double elapsed_time_quintic{0.0};
-    
-
 
 
     // Utility functions
@@ -298,7 +285,9 @@ class JointPositionsBridge : public rclcpp_lifecycle::LifecycleNode {
     std::array<double, 7UL> first_order_filter (const std::array<double, 7UL> &input, std::array<double, 7UL> input_old, std::array<double, 7UL> &output_old) {
         std::array<double, 7UL> output{};
         for (int i=0; i<7 ; i++){
-          output[i]= 0.285714285714286*output_old[i] + 0.357142857142857*input[i] + 0.357142857142857*input_old[i];
+          //output[i]= 0.285714285714286*output_old[i] + 0.357142857142857*input[i] + 0.357142857142857*input_old[i];
+          output[i]= 0.818181818181818*output_old[i] + 0.090909090909091*input[i] + 0.090909090909091*input_old[i];
+ 
         }
         return output;
     }
@@ -542,23 +531,10 @@ class JointPositionsBridge : public rclcpp_lifecycle::LifecycleNode {
             }
             command_queue_mutex.unlock();
 
-            // pos_cmd_smoothed = first_order_filter(pos_cmd, input_old, output_old);
-            // output_old = pos_cmd_smoothed;
-            // input_old = pos_cmd;
-
-            elapsed_time_quintic += dt.toSec();
-            //interpolo usando un quintico
-            for (size_t i = 0; i < 7; ++i) {
-                pos_cmd_smoothed[i] = quintic(prev_command[i], pos_cmd[i], elapsed_time_quintic, 0.005); // 0.005 second interpolation time
-              }
-            if(elapsed_time_quintic >= 0.005) {
-              elapsed_time_quintic = 0.0;
-              for (size_t i = 0; i < 7; ++i) {
-                prev_command[i] = pos_cmd[i];
-              }
-            }
-            
-            
+            pos_cmd_smoothed = first_order_filter(pos_cmd, input_old, output_old);
+            output_old = pos_cmd_smoothed;
+            input_old = pos_cmd;
+            prev_command = pos_cmd;
 
 
           }
@@ -576,47 +552,47 @@ class JointPositionsBridge : public rclcpp_lifecycle::LifecycleNode {
             }
           }
 
-          // try{
-          //   for (size_t i = 0; i < 7; i++) {
-          //     if(dt.toSec()!=0.0) //Protezione contro divisioni per zero in caso di problemi con il tempo di controllo
-          //     {
-          //       if (std::abs((pos_cmd[i]-prev_command[i])/dt.toSec()) > velocity_limits[i]*joint_speed_safe_limit_factor) {
-          //       RCLCPP_WARN_STREAM_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
-          //         "Commanded joint position " << pos_cmd[i]
-          //         << " exceeds safe limit of " << velocity_limits[i]*joint_speed_safe_limit_factor);
-          //         if(!clamp)
-          //         {             
-          //           pos_cmd = robot_state.q;
-          //           panda_franka->stop();
-          //           start_flag.store(false);
-          //           return franka::MotionFinished(franka::JointPositions(pos_cmd));
-          //         }
-          //       }
-          //     }
-          //     if(std::isnan(pos_cmd[i]) || std::isinf(pos_cmd[i])) {
-          //       RCLCPP_ERROR_STREAM(this->get_logger(),
-          //         "Commanded joint position " << pos_cmd[i]
-          //         << " is not a finite number. Stopping control.");
-          //         pos_cmd = robot_state.q;
-          //         panda_franka->stop();
-          //         start_flag.store(false);
-          //         return franka::MotionFinished(franka::JointPositions(pos_cmd));
-          //     }
-          //   }
-          //   if (robot_state.O_T_EE[14] <= critical_height) { 
-          //     RCLCPP_ERROR_STREAM(this->get_logger(),
-          //                         "Height of the end affector wrt base under "
-          //                         "allowed value " << critical_height << "m");
-          //     panda_franka->stop();
-          //     start_flag.store(false);
-          //     return franka::MotionFinished(franka::JointPositions(robot_state.q));
-          //   }
-          // } catch (const std::exception &e) {
-          //   RCLCPP_ERROR_STREAM(this->get_logger(), "Error in safety check: " << e.what());
-          //   panda_franka->stop();
-          //   start_flag.store(false);
-          //   return franka::MotionFinished(franka::JointPositions(robot_state.q));
-          // }
+          try{
+            for (size_t i = 0; i < 7; i++) {
+              if(dt.toSec()!=0.0) //Protezione contro divisioni per zero in caso di problemi con il tempo di controllo
+              {
+                if (std::abs((pos_cmd[i]-prev_command[i])/dt.toSec()) > velocity_limits[i]*joint_speed_safe_limit_factor) {
+                RCLCPP_WARN_STREAM_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+                  "Commanded joint position " << pos_cmd[i]
+                  << " exceeds safe limit of " << velocity_limits[i]*joint_speed_safe_limit_factor);
+                  if(!clamp)
+                  {             
+                    pos_cmd = robot_state.q;
+                    panda_franka->stop();
+                    start_flag.store(false);
+                    return franka::MotionFinished(franka::JointPositions(pos_cmd));
+                  }
+                }
+              }
+              if(std::isnan(pos_cmd[i]) || std::isinf(pos_cmd[i])) {
+                RCLCPP_ERROR_STREAM(this->get_logger(),
+                  "Commanded joint position " << pos_cmd[i]
+                  << " is not a finite number. Stopping control.");
+                  pos_cmd = robot_state.q;
+                  panda_franka->stop();
+                  start_flag.store(false);
+                  return franka::MotionFinished(franka::JointPositions(pos_cmd));
+              }
+            }
+            if (robot_state.O_T_EE[14] <= critical_height) { 
+              RCLCPP_ERROR_STREAM(this->get_logger(),
+                                  "Height of the end affector wrt base under "
+                                  "allowed value " << critical_height << "m");
+              panda_franka->stop();
+              start_flag.store(false);
+              return franka::MotionFinished(franka::JointPositions(robot_state.q));
+            }
+          } catch (const std::exception &e) {
+            RCLCPP_ERROR_STREAM(this->get_logger(), "Error in safety check: " << e.what());
+            panda_franka->stop();
+            start_flag.store(false);
+            return franka::MotionFinished(franka::JointPositions(robot_state.q));
+          }
 
           
           // if(dt.toSec()!=0.0)
@@ -638,7 +614,7 @@ class JointPositionsBridge : public rclcpp_lifecycle::LifecycleNode {
           if (clamp) {
             clamp_control(pos_cmd);
           }
-          return franka::JointPositions(initial_pos_);
+          return franka::JointPositions(pos_cmd_smoothed);
         };
 
       } catch (const franka::Exception &e) {

@@ -102,7 +102,7 @@ int main(int argc, char **argv) {
     desired_goal.position[0] += 0.2;
 
     
-    auto next_wake = std::chrono::steady_clock::now() + std::chrono::milliseconds(5);
+    auto next_wake = std::chrono::steady_clock::now() + std::chrono::milliseconds(1);
     
     while (rclcpp::ok() && t < traj_duration) {
     // auto old_t = cmd.header.stamp;
@@ -120,7 +120,7 @@ int main(int argc, char **argv) {
 
       // // loop_rate.sleep();
       std::this_thread::sleep_until(next_wake);
-      next_wake += std::chrono::milliseconds(5);
+      next_wake += std::chrono::milliseconds(1);
     }
 
   rclcpp::shutdown();

@@ -1,3 +1,4 @@
+
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -26,18 +27,15 @@
 
 #include "geometry_msgs/msg/pose.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
-#include "sensor_msgs/msg/joint_state.hpp"
 
 #include "sensor_msgs/msg/joint_state.hpp"
 #include "panda_utils/constants.hpp"
 #include "panda_utils/utils_func.hpp"
 
 
-template <typename messageT> using Publisher = rclcpp::Publisher<messageT>;  
+using sensor_msgs::msg::JointState;
 using geometry_msgs::msg::Pose;
 using geometry_msgs::msg::PoseStamped;
-using sensor_msgs::msg::JointState;
-using namespace std::chrono_literals;
 
 struct robot_state {
   std::optional<franka::RobotState> state;
@@ -115,7 +113,7 @@ void print_initial_franka_state(const franka::RobotState state, const franka::Mo
     auto jacobian = geom_utils::get_jacobian(model.zeroJacobian(franka::Frame::kFlange, state));
     RCLCPP_INFO_STREAM_ONCE(logger, "Current jacobian: \n[" << jacobian << "]");
 
-    // B(q) letta dal modello
+    // B(q) from the model
     std::array<double, 49> mass_matrix_raw = model.mass(state);
     Eigen::Matrix<double, 7, 7> mass_matrix;
     for (size_t i = 0; i < 7; i++) {
@@ -124,29 +122,26 @@ void print_initial_franka_state(const franka::RobotState state, const franka::Mo
       }
     }
 
-    // C(q, qdot) calcolata dal modello
+    // C(q, qdot) from the mode
     std::array<double, 7> coriolis_raw = model.coriolis(state);
     Eigen::Vector<double, 7> coriolis;
     for (size_t i = 0; i < 7; i++) {
       coriolis(i) = coriolis_raw[i];
     }
 
-    //Estrae il valore singolare più piccolo (σ_min) del jacobiano
-    Eigen::JacobiSVD<Eigen::MatrixXd> svd(jacobian, Eigen::ComputeThinU |
-                                                        Eigen::ComputeThinV);
-    // double sigma_min = svd.singularValues().tail(1)(0);
+    //Compute svd of the jacobian to check the minimum singular value
+    Eigen::JacobiSVD<Eigen::MatrixXd> svd(jacobian, Eigen::ComputeThinU |  Eigen::ComputeThinV);
+    double sigma_min = svd.singularValues().tail(1)(0);
+    RCLCPP_INFO_STREAM_ONCE(logger, "Current sigma min: " << sigma_min);
 
-    // Calcolo della pseudoinversa del Jacobiano con damping per proteggere da singolarità
+    //Compute the pseudoinverse of the jacobian to print it
     Eigen::Matrix<double, 7, 6> jacobian_pinv = compute_jacob_pseudoinv(jacobian);
 
-    RCLCPP_INFO_STREAM_ONCE(logger,
-                            "Current mass matrix: \n[" << mass_matrix << "]");
+    RCLCPP_INFO_STREAM_ONCE(logger,"Current mass matrix: \n[" << mass_matrix << "]");
 
-    RCLCPP_INFO_STREAM_ONCE(logger,
-                            "Current coriolis vector: \n[" << coriolis << "]");
+    RCLCPP_INFO_STREAM_ONCE(logger,"Current coriolis vector: \n[" << coriolis << "]");
 
-    RCLCPP_INFO_STREAM_ONCE(logger,
-                            "Current pseudoinv: \n[" << jacobian_pinv << "]");
+    RCLCPP_INFO_STREAM_ONCE(logger,"Current pseudoinv: \n[" << jacobian_pinv << "]");
   }
 
 }
@@ -165,10 +160,10 @@ class JointVelocitiesBridge : public rclcpp_lifecycle::LifecycleNode {
 
     private:
 
-    //Subscribers
+    //Subscriber for commanded velocities
     rclcpp::Subscription<JointState>::SharedPtr velocity_cmd_sub;
 
-    // Robot pose publisher and debug
+    // Robot pose and joint states publishers
     realtime_tools::RealtimePublisher<geometry_msgs::msg::PoseStamped>::SharedPtr robot_pose_pub_computed{};
     realtime_tools::RealtimePublisher<geometry_msgs::msg::PoseStamped>::SharedPtr robot_pose_pub_read{}; 
     realtime_tools::RealtimePublisher<sensor_msgs::msg::JointState>::SharedPtr joint_states_pub{}; 
@@ -183,20 +178,22 @@ class JointVelocitiesBridge : public rclcpp_lifecycle::LifecycleNode {
     std::array<double, 3> F_x_Cload{0.0, 0.0, 0.0};
     std::array<double, 9> load_inertia{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
     std::array<double, 16> flange_T_ee;
-    std::vector<double> flange_T_ee_translation{0,0,0.0}; //Traslazione tra flange e end effector
-    std::vector<double> flange_T_ee_rotation{1,0,0,0}; //Rotazione tra flange
+    std::vector<double> flange_T_ee_translation{0,0,0.0}; //Flange to end-effector translation
+    std::vector<double> flange_T_ee_rotation{1,0,0,0}; //Flange to end-effector rotation as quaternion
 
     // Callback function for the FCI
     std::function<franka::JointVelocities(const franka::RobotState &, franka::Duration)> velocities_bridge_callback; //Callback for sending velocities to the robot
 
     // Commanded velocities
-    realtime_tools::RealtimeThreadSafeBox<std::array<double, 7>> commanded_velocities{{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}};
+    //realtime_tools::RealtimeThreadSafeBox<std::array<double, 7>> commanded_velocities{{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}};
+    std::array<double, 7> commanded_velocities{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
 
-    // Debug
+    // State to publish about the robot, to be used for debugging and visualization
     JointState joint_state_to_pub{};
 
-    //comando vecchio
-    Eigen::Vector<double, 7> filtered_vel_cmd_eigen{};
+    //Storage of the filtered velocity command to be sent to the robot to be used as the old command 
+    //Eigen::Vector<double, 7> filtered_vel_cmd_eigen{};
+    std::array<double, 7> filtered_vel_cmd{};
 
     // Safe limits
     Eigen::VectorXd velocity_limits{};
@@ -204,7 +201,7 @@ class JointVelocitiesBridge : public rclcpp_lifecycle::LifecycleNode {
     double joint_speed_safe_limit_factor{};
     bool clamp;
 
-    //thread
+    //Thread spawned to run the dubug publisher
     std::thread control_thread;
     std::atomic<bool> start_flag{false};
 
@@ -222,8 +219,8 @@ class JointVelocitiesBridge : public rclcpp_lifecycle::LifecycleNode {
 
 
     // Utility functions
-    void clamp_control(Eigen::Vector<double, 7> &control_input, const double &safe_limit) {
-      for (int i = 0; i < control_input.size(); i++) {
+    void clamp_control(std::array<double, 7UL> &control_input, const double &safe_limit) {
+      for (int i = 0; i < 7; i++) {
         if (control_input[i] > velocity_limits[i]*safe_limit) {
           control_input[i] = velocity_limits[i]*safe_limit;
         } else if (control_input[i] < -velocity_limits[i]*safe_limit) {
@@ -249,7 +246,7 @@ class JointVelocitiesBridge : public rclcpp_lifecycle::LifecycleNode {
         this->declare_parameter<double>("command_timeout_ms", 10000.0);
 
         
-        //Setup
+        //Setup from parameters
         joint_speed_safe_limit_factor = this->get_parameter("safe_joint_speed_factor").as_double();
         showing_details = this->get_parameter("show_details").as_bool();
         clamp = this->get_parameter("clamp").as_bool();
@@ -268,9 +265,11 @@ class JointVelocitiesBridge : public rclcpp_lifecycle::LifecycleNode {
         //Taking limits from constants.hpp
         velocity_limits= panda_constants::velocity_limits;
 
+        //Setting up the subscriber for commanded velocities with intra-process communication enabled
         rclcpp::SubscriptionOptions velocity_cmd_sub_options;
         velocity_cmd_sub_options.use_intra_process_comm = rclcpp::IntraProcessSetting::Enable;
 
+        //Setting up the QoS for the velocity command subscriber
         rclcpp::QoS velocity_cmd_qos(rclcpp::KeepLast(1));
         velocity_cmd_qos.best_effort();
         velocity_cmd_qos.durability_volatile();
@@ -279,12 +278,15 @@ class JointVelocitiesBridge : public rclcpp_lifecycle::LifecycleNode {
             "/panda/joint_velocity_command", velocity_cmd_qos,
             [this](const JointState::SharedPtr msg) {
               
-              commanded_velocities.set({msg->velocity[0], msg->velocity[1], msg->velocity[2], msg->velocity[3], msg->velocity[4], msg->velocity[5], msg->velocity[6]});
+              //commanded_velocities.set({msg->velocity[0], msg->velocity[1], msg->velocity[2], msg->velocity[3], msg->velocity[4], msg->velocity[5], msg->velocity[6]});
+              commanded_velocities = {msg->velocity[0], msg->velocity[1], msg->velocity[2], msg->velocity[3], msg->velocity[4], msg->velocity[5], msg->velocity[6]};
               last_cmd_time = this->now();
-              have_cmd = true;
+              if(!have_cmd)
+                have_cmd = true;
             },
             velocity_cmd_sub_options);
         
+        //Setting up the realtime publishers for the robot state
         robot_pose_pub_computed = std::make_shared<realtime_tools::RealtimePublisher<geometry_msgs::msg::PoseStamped>>(
             this->create_publisher<geometry_msgs::msg::PoseStamped>(panda_interface_names::panda_pose_state_topic_name + "_computed_ee",
             panda_interface_names::DEFAULT_TOPIC_QOS()));
@@ -310,9 +312,7 @@ class JointVelocitiesBridge : public rclcpp_lifecycle::LifecycleNode {
       RCLCPP_INFO(this->get_logger(), "Configuring Joint Velocities Bridge...");
 
       if (!realtime_tools::has_realtime_kernel()) {
-        RCLCPP_ERROR(
-            this->get_logger(),
-            "No real time kernel available for libfranka communication");
+        RCLCPP_ERROR(this->get_logger(),"No real time kernel available, that is needed, for libfranka communication");
         return CallbackReturn::FAILURE;
       }
 
@@ -336,10 +336,13 @@ class JointVelocitiesBridge : public rclcpp_lifecycle::LifecycleNode {
         RCLCPP_INFO_STREAM(this->get_logger(), "Robot model loaded.");
 
         RCLCPP_INFO_STREAM(this->get_logger(), "Setting up end effector...");
+
         //obtaining the transformation matrix from flange to end effector
         auto flange_T_ee_matrix = vectors_to_homogeneous(flange_T_ee_translation, flange_T_ee_rotation);
-        flange_T_ee.fill(0.0);  // Initialize all elements to 0
+        flange_T_ee.fill(0.0);
+
         Eigen::Map<Eigen::Matrix4d>(flange_T_ee.data()) = flange_T_ee_matrix;
+
         //Print Transformation matrix vectorized
         panda_franka->setEE(flange_T_ee);
         RCLCPP_INFO_STREAM(this->get_logger(), "End effector set.");
@@ -350,15 +353,15 @@ class JointVelocitiesBridge : public rclcpp_lifecycle::LifecycleNode {
         joint_state_to_pub.position.resize(7);
         joint_state_to_pub.velocity.resize(7);
         joint_state_to_pub.effort.resize(7);
-        joint_state_to_pub.name = std::vector<std::string>{"joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"};
+        joint_state_to_pub.name = std::vector<std::string>{"fer_joint1", "fer_joint2", "fer_joint3", "fer_joint4", "fer_joint5", "fer_joint6", "fer_joint7"};
       
-        //adesso viene definita la callback che viene eseguita ad ogni ciclo di controllo e mandata alla funzione control della libreria franka
+        
         velocities_bridge_callback = [this](const franka::RobotState &robot_state,
                                            franka::Duration dt) -> franka::JointVelocities {
           
           std::array<double, 7> vel_cmd{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
 
-          //Aggiorno lo stato del robot
+          //Update the robot state
           {
             std::lock_guard<std::mutex> lock(panda_franka_state.mut);
             panda_franka_state.state = robot_state;
@@ -366,7 +369,8 @@ class JointVelocitiesBridge : public rclcpp_lifecycle::LifecycleNode {
           }
 
           //Get commanded velocities
-          vel_cmd = commanded_velocities.get();
+          // vel_cmd = commanded_velocities.get();
+          vel_cmd= commanded_velocities;
 
           // Watchdog: stop if no recent command but first command received
           if (command_timeout_ms > 0.0 && have_cmd) {
@@ -407,47 +411,39 @@ class JointVelocitiesBridge : public rclcpp_lifecycle::LifecycleNode {
                 return franka::MotionFinished(franka::JointVelocities(vel_cmd));
               }
             }
-            if (robot_state.O_T_EE[14] <= critical_height) { //supponiamo che se stiamo a 10 cm di altezza stiamo per urtare contro il tavolo, è un valore da tarare in base al setup
+            if (robot_state.O_T_EE[14] <= critical_height) { //critical height to be choosen
               RCLCPP_ERROR_STREAM(this->get_logger(),
                                   "Height of the end affector wrt base under "
                                   "allowed value " << critical_height << "m");
               panda_franka->stop();
               start_flag.store(false);
-              return franka::MotionFinished(franka::JointVelocities(std::array<double, 7>{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}));
+              vel_cmd = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+              return franka::MotionFinished(franka::JointVelocities(std::array<double, 7>{vel_cmd}));
             }
           } catch (const std::exception &e) {
             RCLCPP_ERROR_STREAM(this->get_logger(), "Error in safety check: " << e.what());
             panda_franka->stop();
             start_flag.store(false);
-            return franka::MotionFinished(franka::JointVelocities(std::array<double, 7>{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}));
-          }
-
-          //Convert to Eigen vector for clamping
-          Eigen::Vector<double, 7> vel_cmd_eigen;
-          for (size_t i = 0; i < 7; i++) {
-            vel_cmd_eigen[i] = vel_cmd[i];
+            vel_cmd = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+            return franka::MotionFinished(franka::JointVelocities(std::array<double, 7>{vel_cmd}));
           }
 
           //Clamp control input if enabled
           if (clamp) {
-            clamp_control(vel_cmd_eigen, joint_speed_safe_limit_factor);
+            clamp_control(vel_cmd, joint_speed_safe_limit_factor);
           }
           if (dt.toSec() != 0.0) {
             for (int i = 0; i < 7; i++) {
               // Filtering the velocity command with a low-pass filter to avoid sudden jumps in the control input, using the current joint speed as input and the commanded velocity as output, with a cutoff frequency defined by joints_speed_cutoff_freq
-              filtered_vel_cmd_eigen[i] = franka::lowpassFilter(dt.toSec(), vel_cmd_eigen[i], filtered_vel_cmd_eigen[i],
-                  joints_speed_cutoff_freq);  
+              filtered_vel_cmd[i] = franka::lowpassFilter(dt.toSec(), vel_cmd[i], filtered_vel_cmd[i],joints_speed_cutoff_freq);  
             }
           } else {
-            filtered_vel_cmd_eigen = vel_cmd_eigen;
+            filtered_vel_cmd = vel_cmd;
           }
           //Convert back to std::array
           for (size_t i = 0; i < 7; i++) {
-            vel_cmd[i] = filtered_vel_cmd_eigen[i];
+            vel_cmd[i] = filtered_vel_cmd[i];
           }
-
-          //print control input for debug
-          RCLCPP_DEBUG_STREAM(this->get_logger(), "Control input: [" << filtered_vel_cmd_eigen.transpose() << "]");
           return franka::JointVelocities(vel_cmd);
         };
 
@@ -538,8 +534,7 @@ class JointVelocitiesBridge : public rclcpp_lifecycle::LifecycleNode {
             start_flag.store(false);
             rclcpp::shutdown();
           }
-          // Start control
-          //debug print
+          // Start control with FCI
           RCLCPP_INFO(this->get_logger(), "Starting control with real time robot...");
           panda_franka->control(velocities_bridge_callback);
         } catch (const franka::Exception &ex) {
@@ -594,9 +589,7 @@ class JointVelocitiesBridge : public rclcpp_lifecycle::LifecycleNode {
 int main(int argc, char *argv[]) {
   rclcpp::init(argc, argv);
   if (!realtime_tools::configure_sched_fifo(80)) {
-    RCLCPP_WARN(rclcpp::get_logger("panda_joint_velocities_bridge"),
-                "Failed to set realtime priority for ROS spin thread");
-  }
+    RCLCPP_WARN(rclcpp::get_logger("panda_joint_velocities_bridge"),"Failed to set realtime priority for ROS spin thread");}
   auto node = std::make_shared<JointVelocitiesBridge>();
   rclcpp::spin(node->get_node_base_interface());
   rclcpp::shutdown();

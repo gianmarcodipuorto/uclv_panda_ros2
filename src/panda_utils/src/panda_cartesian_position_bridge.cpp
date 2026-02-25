@@ -189,6 +189,9 @@ class CartesianPositionBridge : public rclcpp_lifecycle::LifecycleNode {
     bool is_initialized = false;
     std::array<double, 16> prev_pose{};
 
+    // Commanded position 
+    std::array<double, 16> pose_cmd{};
+
     
 
     // Safe limits
@@ -345,7 +348,6 @@ class CartesianPositionBridge : public rclcpp_lifecycle::LifecycleNode {
         cartesian_positions_bridge_callback = [this](const franka::RobotState &robot_state,
                                            franka::Duration dt) -> franka::CartesianPose {
           
-          std::array<double, 16> pose_cmd{};
 
           //Aggiorno lo stato del robot
           {
@@ -362,7 +364,7 @@ class CartesianPositionBridge : public rclcpp_lifecycle::LifecycleNode {
           }
 
           //Get commanded positions
-          // Extract first 3 (position) and last 4 (orientation) elements from commanded_cartesian_positions
+          if(have_cmd){
           const auto& cmd = commanded_cartesian_positions.get();
           std::vector<double> position = {cmd[0], cmd[1], cmd[2]};
           std::vector<double> orientation = {cmd[3], cmd[4], cmd[5], cmd[6]};
@@ -374,7 +376,7 @@ class CartesianPositionBridge : public rclcpp_lifecycle::LifecycleNode {
                 pose_cmd[i * 4 + j] = commanded_positions_matrix(j, i);
                 }
             }
-
+          }
           try {
             // Watchdog: stop if no recent command but first command received
             if (command_timeout_ms > 0.0 && have_cmd) {
@@ -419,7 +421,7 @@ class CartesianPositionBridge : public rclcpp_lifecycle::LifecycleNode {
             return franka::MotionFinished(franka::CartesianPose(pose_cmd));
           }
 
-          return franka::CartesianPose(pose_cmd);
+          return franka::CartesianPose(pose_cmd); 
         };
 
       } catch (const franka::Exception &e) {
