@@ -469,6 +469,11 @@ class JointPositionsBridge : public rclcpp_lifecycle::LifecycleNode {
             panda_franka_state.state_time = this->now();
           }
 
+          //questa è la vecchia velocità che è stata computata al passo precendente
+          //panda_franka_state.state->dq_d;, questa è la velocità desiderata al passo precedente che io non ho comandato ma ha calcolato
+          //come la posso usare per evitare che questa velocità sia discontinua?
+          //panda_franka_state.state->ddq_d;
+
           // Sincronizza alla prima iterazione con la posizione attuale del robot
           if (!is_initialized) {
             command_queue.push(robot_state.q);

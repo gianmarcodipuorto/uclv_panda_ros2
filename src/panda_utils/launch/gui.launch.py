@@ -5,7 +5,7 @@ def generate_launch_description():
     return LaunchDescription([
         Node(
             package='panda_utils',
-            executable='panda_gui.py',  # Note: .py extension for scripts
+            executable='panda_gui_py',  # Note: .py extension for scripts
             name='panda_gui',
             output='screen',
             emulate_tty=True

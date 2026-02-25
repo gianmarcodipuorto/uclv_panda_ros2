@@ -548,7 +548,8 @@ class CartesianVelocitiesBridge : public rclcpp_lifecycle::LifecycleNode {
           // Start control
           //debug print
           RCLCPP_INFO(this->get_logger(), "Starting control with real time robot...");
-          panda_franka->control(cartesian_velocities_bridge_callback);
+          panda_franka->control(cartesian_velocities_bridge_callback,
+                                franka::ControllerMode::kCartesianImpedance);
         } catch (const franka::Exception &ex) {
           start_flag.store(false);
           if (panda_franka.has_value()) {

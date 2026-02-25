@@ -76,7 +76,6 @@ install(TARGETS
   simple_velocity_traj
   panda_gui
 
-
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -88,8 +87,9 @@ install(
 )
 
 install(PROGRAMS
-  gui/panda_gui.py
+  gui/panda_gui_py.py
   DESTINATION lib/${PROJECT_NAME}
+  RENAME panda_gui_py
 )
 
 ament_export_include_directories(include)
