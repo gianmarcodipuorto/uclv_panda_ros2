@@ -513,6 +513,7 @@ class JointPositionsBridge : public rclcpp_lifecycle::LifecycleNode {
                   pos_cmd[i] = initial_q_[i];
                 }
               }
+              pos_cmd_smoothed = pos_cmd; // No smoothing for demo
             } else {
               // Sinusoidal trajectory
               double delta_angle = M_PI / 30.0 * (1.0 - std::cos(2*M_PI * elapsed_time_ / demo_duration));
@@ -712,7 +713,7 @@ class JointPositionsBridge : public rclcpp_lifecycle::LifecycleNode {
             }
           }}.detach();
           //Set real time priority
-          if (realtime_tools::configure_sched_fifo(30)) {
+          if (realtime_tools::configure_sched_fifo(99)) {
             RCLCPP_INFO(this->get_logger(), "Set real time priority");
           } else {
             RCLCPP_ERROR(this->get_logger(),"Real time priority not set, shutting down");
@@ -746,12 +747,19 @@ class JointPositionsBridge : public rclcpp_lifecycle::LifecycleNode {
     }
 
     CallbackReturn on_deactivate(const rclcpp_lifecycle::State &) override {
-      RCLCPP_INFO(this->get_logger(), "Deactivating Joint Positions Bridge...");
+      RCLCPP_INFO(this->get_logger(), "Deactivating...");
       start_flag.store(false);
+      if (panda_franka.has_value()) {
+        try {
+          panda_franka->stop();
+        } catch (const franka::Exception& e) {
+          RCLCPP_WARN(this->get_logger(), "Stop OK: %s", e.what());
+        }
+      }
       if (control_thread.joinable()) {
         control_thread.join();
       }
-      RCLCPP_INFO(this->get_logger(), "Joint Positions Bridge deactivated.");
+      RCLCPP_INFO(this->get_logger(), "Deactivated.");
       return CallbackReturn::SUCCESS;
     }
 

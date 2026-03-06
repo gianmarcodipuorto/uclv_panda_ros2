@@ -570,12 +570,19 @@ class CartesianVelocitiesBridge : public rclcpp_lifecycle::LifecycleNode {
     }
 
     CallbackReturn on_deactivate(const rclcpp_lifecycle::State &) override {
-      RCLCPP_INFO(this->get_logger(), "Deactivating Cartesian Velocities Bridge...");
+      RCLCPP_INFO(this->get_logger(), "Deactivating...");
       start_flag.store(false);
+      if (panda_franka.has_value()) {
+        try {
+          panda_franka->stop();
+        } catch (const franka::Exception& e) {
+          RCLCPP_WARN(this->get_logger(), "Stop OK: %s", e.what());
+        }
+      }
       if (control_thread.joinable()) {
         control_thread.join();
       }
-      RCLCPP_INFO(this->get_logger(), "Cartesian Velocities Bridge deactivated.");
+      RCLCPP_INFO(this->get_logger(), "Deactivated.");
       return CallbackReturn::SUCCESS;
     }
 
