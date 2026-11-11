@@ -5,9 +5,15 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
+if(NOT CMAKE_CXX_STANDARD)
+  set(CMAKE_CXX_STANDARD 17)
+  set(CMAKE_CXX_STANDARD_REQUIRED ON)
+endif()
+
 # find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(rclcpp_action REQUIRED)
 find_package(uclv_panda_interfaces REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
@@ -17,10 +23,14 @@ find_package(tf2_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(ament_index_cpp REQUIRED)
 find_package(rclcpp_lifecycle REQUIRED)
+find_package(lifecycle_msgs REQUIRED)
 find_package(realtime_tools REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(rclcpp_components REQUIRED)
+# libfranka 0.9.x is the last release compatible with the FER (Panda), installed from source
+find_package(Franka 0.9 REQUIRED)
+find_package(ruckig REQUIRED)
 find_package(Qt5 REQUIRED COMPONENTS Core Widgets)
 
 # Python support for GUI
@@ -31,45 +41,56 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
-include_directories(
-  include
-  /opt/ros/jazzy/include
-  # ~/libfranka/include/
+include_directories(include)
+
+# Infrastructure shared by the bridges: command pipeline, robot backend, lifecycle base node
+add_library(panda_bridge_core STATIC
+  src/bridge/pipeline.cpp
+  src/bridge/robot_backend.cpp
+  src/bridge/state_conversions.cpp
+  src/bridge/bridge_base.cpp
+  src/bridge/joint_bridge.cpp
+  src/bridge/cartesian_bridge.cpp
 )
+set_target_properties(panda_bridge_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_include_directories(panda_bridge_core PUBLIC include)
+ament_target_dependencies(panda_bridge_core PUBLIC
+  rclcpp rclcpp_lifecycle rclcpp_action lifecycle_msgs realtime_tools uclv_panda_interfaces
+  sensor_msgs geometry_msgs std_srvs tf2_eigen)
+target_link_libraries(panda_bridge_core PUBLIC Franka::Franka ruckig::ruckig)
 
 add_executable(panda_gui  src/panda_gui.cpp)
 ament_target_dependencies(panda_gui rclcpp rclcpp_lifecycle std_srvs geometry_msgs sensor_msgs)
 target_link_libraries(panda_gui Qt5::Core Qt5::Widgets
 )
 
-add_executable(panda_joint_velocities_bridge ./src/panda_joint_velocities_bridge.cpp ./src/constants.cpp)
-ament_target_dependencies(panda_joint_velocities_bridge rclcpp uclv_panda_interfaces std_msgs tf2_eigen sensor_msgs rclcpp_lifecycle realtime_tools geometry_msgs)
-target_link_libraries(panda_joint_velocities_bridge franka)
+add_executable(panda_joint_positions_bridge src/panda_joint_positions_bridge.cpp)
+target_link_libraries(panda_joint_positions_bridge panda_bridge_core)
 
-add_executable(panda_joint_positions_bridge ./src/panda_joint_positions_bridge.cpp ./src/constants.cpp)
-ament_target_dependencies(panda_joint_positions_bridge rclcpp uclv_panda_interfaces std_msgs tf2_eigen sensor_msgs rclcpp_lifecycle realtime_tools geometry_msgs)
-target_link_libraries(panda_joint_positions_bridge franka)
+add_executable(panda_joint_velocities_bridge src/panda_joint_velocities_bridge.cpp)
+target_link_libraries(panda_joint_velocities_bridge panda_bridge_core)
 
-add_executable(panda_cartesian_velocity_bridge ./src/panda_cartesian_velocity_bridge.cpp ./src/constants.cpp)
-ament_target_dependencies(panda_cartesian_velocity_bridge rclcpp uclv_panda_interfaces std_msgs tf2_eigen sensor_msgs rclcpp_lifecycle realtime_tools geometry_msgs)
-target_link_libraries(panda_cartesian_velocity_bridge franka)
+add_executable(panda_joint_torques_bridge src/panda_joint_torques_bridge.cpp)
+target_link_libraries(panda_joint_torques_bridge panda_bridge_core)
 
-add_executable(panda_cartesian_position_bridge ./src/panda_cartesian_position_bridge.cpp ./src/constants.cpp)
-ament_target_dependencies(panda_cartesian_position_bridge rclcpp uclv_panda_interfaces std_msgs tf2_eigen sensor_msgs rclcpp_lifecycle realtime_tools geometry_msgs)
-target_link_libraries(panda_cartesian_position_bridge franka)
+add_executable(panda_cartesian_position_bridge src/panda_cartesian_position_bridge.cpp)
+target_link_libraries(panda_cartesian_position_bridge panda_bridge_core)
+
+add_executable(panda_cartesian_velocity_bridge src/panda_cartesian_velocity_bridge.cpp)
+target_link_libraries(panda_cartesian_velocity_bridge panda_bridge_core)
 
 add_executable(simple_joints_traj ./src/simple_joint_traj.cpp)
 ament_target_dependencies(simple_joints_traj rclcpp uclv_panda_interfaces std_msgs tf2_eigen sensor_msgs rclcpp_lifecycle realtime_tools geometry_msgs)
-target_link_libraries(simple_joints_traj franka)
 
 add_executable(simple_velocity_traj ./src/simple_velocity_joint_traj.cpp)
 ament_target_dependencies(simple_velocity_traj rclcpp uclv_panda_interfaces std_msgs tf2_eigen sensor_msgs rclcpp_lifecycle realtime_tools geometry_msgs)
-target_link_libraries(simple_velocity_traj franka)
+
 
 
 install(TARGETS
   panda_joint_velocities_bridge
   panda_joint_positions_bridge
+  panda_joint_torques_bridge
   panda_cartesian_velocity_bridge
   panda_cartesian_position_bridge
   simple_joints_traj
