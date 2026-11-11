@@ -16,7 +16,11 @@ find_package(sensor_msgs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "action/JointTraj.action"
+  "action/CartTraj.action"
   "msg/JointsCommandedPositions.msg"
+  "msg/PandaRobotState.msg"
+  "msg/BridgeStatus.msg"
+  "srv/RunPreset.srv"
   DEPENDENCIES tf2_msgs geometry_msgs std_msgs sensor_msgs
 )
 

@@ -1,0 +1,9 @@
+# Starts a predefined motion of the active bridge (internal mode only).
+string preset
+# Seconds, <= 0 uses the preset default
+float64 duration
+# Preset-specific amplitude, 0 uses the preset default
+float64 amplitude
+---
+bool accepted
+string message
