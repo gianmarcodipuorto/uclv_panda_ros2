@@ -86,14 +86,15 @@ struct PoseStream {
     trajectory = test_motion(ready_ee_pose());
   }
 
+  // The client updates its value every hold_ms and republishes it in between.
   void run(int duration_ms, int publish_until_ms, double max_latency_ms, double loss, double duplicates,
-           bool flip_signs = false) {
+           bool flip_signs = false, int hold_ms = 1) {
     std::uniform_real_distribution<double> uniform(0.0, 1.0);
     for (int k = 1; k <= duration_ms; ++k) {
       const int64_t now = kStart + k * kCycleNs;
       if (k <= publish_until_ms && uniform(rng) >= loss) {
         CartesianState point;
-        trajectory.evaluate(k * 1e-3 - 0.1, point);  // client starts after 100 ms
+        trajectory.evaluate(k / hold_ms * hold_ms * 1e-3 - 0.1, point);  // client starts after 100 ms
         CartesianPosePipeline::Sample sample;
         sample.stamp_ns = now;
         sample.values = pose_values(point.pose);
@@ -332,4 +333,48 @@ TEST(CartesianVelocityPipeline, StreamEndingAtRestIsNotAStall) {
   EXPECT_EQ(pipeline.counters().stalls, 0u);
   EXPECT_EQ(pipeline.state(), State::kHolding);
   EXPECT_LT(distance(pipeline.position().pose, trajectory.goal), 1e-4);
+}
+
+TEST(CartesianPosePipeline, StaircaseStreamStaysWithinLimits) {
+  // Poses updated every 25 ms and republished every ms: the reference stands still, then jumps
+  for (const int64_t playout_ms : {5, 30}) {
+    Config config = default_config(Mode::kExternal);
+    config.playout_delay_ns = playout_ms * kMs;
+    config.stall_timeout_ns = 50 * kMs;
+    PoseStream sim(config);
+    sim.run(4000, 3300, 3.0, 0.0, 0.0, false, 25);
+    expect_cartesian_within_limits(sim.commands, config.cartesian.limits, true);
+    EXPECT_EQ(sim.pipeline.tracker_errors(), 0u) << "playout " << playout_ms << " ms";
+    EXPECT_EQ(sim.pipeline.counters().stalls, 0u);
+  }
+}
+
+TEST(CartesianVelocityPipeline, StaircaseStreamStaysWithinLimits) {
+  // Twists updated every 25 ms and republished every ms: steps of velocity
+  for (const int64_t playout_ms : {5, 30}) {
+    CartesianVelocityPipeline pipeline;
+    Config config = default_config(Mode::kExternal);
+    config.playout_delay_ns = playout_ms * kMs;
+    config.stall_timeout_ns = 50 * kMs;
+    pipeline.configure(config);
+    const Pose start = ready_ee_pose();
+    pipeline.reset(at_rest(start), kStart);
+    const CartesianMotion trajectory = test_motion(start);
+    std::vector<CartesianState> commands{pipeline.command(), pipeline.command()};
+    int64_t now = kStart;
+    for (int k = 1; k <= 4000; ++k) {
+      now += kCycleNs;
+      if (k <= 3300) {
+        CartesianState point;
+        trajectory.evaluate(k / 25 * 25 * 1e-3 - 0.1, point);
+        pipeline.push_sample({now, {point.velocity[0], point.velocity[1], point.velocity[2], point.velocity[3],
+                                    point.velocity[4], point.velocity[5]}});
+      }
+      pipeline.step(now);
+      commands.push_back(pipeline.command());
+    }
+    expect_cartesian_within_limits(commands, config.cartesian.limits, false);
+    EXPECT_EQ(pipeline.tracker_errors(), 0u) << "playout " << playout_ms << " ms";
+    EXPECT_EQ(pipeline.counters().stalls, 0u);
+  }
 }

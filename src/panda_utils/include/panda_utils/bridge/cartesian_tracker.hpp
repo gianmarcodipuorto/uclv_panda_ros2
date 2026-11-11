@@ -458,11 +458,16 @@ class CartesianTracker {
       input_.max_acceleration[i] = a_axis_[i];
       input_.max_jerk[i] = j_axis_[i];
     }
+    // A target acceleration at the limit can leave Ruckig without a profile: then aim at the target
+    // velocity alone, always reachable from a state within the limits
     if (otg_.update(input_, output_) < 0) {
-      // Should not happen with valid limits: keep the velocity rather than command an undefined state
-      ++errors_;
-      accept(state_.velocity);
-      return;
+      input_.target_acceleration.fill(0.0);
+      if (otg_.update(input_, output_) < 0) {
+        // Should not happen with valid limits: keep the velocity rather than command an undefined state
+        ++errors_;
+        accept(state_.velocity);
+        return;
+      }
     }
     CartesianArray u;
     for (std::size_t i = 0; i < kCartesianAxes; ++i) {

@@ -61,9 +61,10 @@ struct StreamSimulation {
     trajectory.duration = 3.0;
   }
 
-  // Runs the robot loop for duration_ms while the client publishes until publish_until_ms.
+  // Runs the robot loop for duration_ms while the client publishes until publish_until_ms. The
+  // client updates its value every hold_ms and republishes it in between.
   void run(int duration_ms, int publish_until_ms, int period_ms, double max_latency_ms, double loss,
-           double duplicates) {
+           double duplicates, int hold_ms = 1) {
     std::uniform_real_distribution<double> uniform(0.0, 1.0);
     for (int k = 1; k <= duration_ms; ++k) {
       const int64_t now = kStart + k * kCycleNs;
@@ -71,7 +72,7 @@ struct StreamSimulation {
         JointPositionPipeline::Sample sample;
         sample.stamp_ns = now;
         JointArray v, a;
-        trajectory.evaluate((k * 1e-3) - 0.1, sample.values, v, a);  // client starts after 100 ms
+        trajectory.evaluate((k / hold_ms * hold_ms * 1e-3) - 0.1, sample.values, v, a);  // client starts after 100 ms
         const auto latency = static_cast<int64_t>(uniform(rng) * max_latency_ms * kMs);
         in_flight.push_back({now + latency, sample});
         if (uniform(rng) < duplicates) {
@@ -414,5 +415,22 @@ TEST(JointPositionPipeline, AbsorbsStreamStartingFromMeasuredPosition) {
   EXPECT_GE(pipeline.counters().playout_margin_min_ns, 0);
   for (std::size_t i = 0; i < kNumJoints; ++i) {
     EXPECT_NEAR(pipeline.command()[i], trajectory.goal[i], 1e-4);
+  }
+}
+
+TEST(JointPositionPipeline, StaircaseStreamStaysWithinLimits) {
+  // A client that updates its value every 25 ms and republishes it every ms: the reference stands
+  // still, then jumps. The tracker must follow it within the limits, without failures of the
+  // trajectory generator, also with a playout delay longer than the steps.
+  for (const int64_t playout_ms : {5, 30}) {
+    auto config = default_config(JointPositionPipeline::Mode::kExternal);
+    config.playout_delay_ns = playout_ms * kMs;
+    config.stall_timeout_ns = 50 * kMs;
+    StreamSimulation sim(config);
+    sim.run(4000, 3200, 1, 3.0, 0.0, 0.0, 25);
+    expect_within_limits(sim.commands, config.limits);
+    EXPECT_EQ(sim.pipeline.tracker_errors(), 0u) << "playout " << playout_ms << " ms";
+    EXPECT_EQ(sim.pipeline.counters().stalls, 0u);
+    EXPECT_EQ(sim.pipeline.state(), State::kHolding);
   }
 }

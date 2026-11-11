@@ -61,7 +61,9 @@ struct StreamSimulation {
     trajectory.duration = 3.0;
   }
 
-  void run(int duration_ms, int publish_until_ms, double max_latency_ms, double loss, double duplicates) {
+  // The client updates its value every hold_ms and republishes it in between.
+  void run(int duration_ms, int publish_until_ms, double max_latency_ms, double loss, double duplicates,
+           int hold_ms = 1) {
     std::uniform_real_distribution<double> uniform(0.0, 1.0);
     for (int k = 1; k <= duration_ms; ++k) {
       const int64_t now = kStart + k * kCycleNs;
@@ -69,7 +71,7 @@ struct StreamSimulation {
         JointVelocityPipeline::Sample sample;
         sample.stamp_ns = now;
         JointArray p, a;
-        trajectory.evaluate((k * 1e-3) - 0.1, p, sample.values, a);  // client starts after 100 ms
+        trajectory.evaluate((k / hold_ms * hold_ms * 1e-3) - 0.1, p, sample.values, a);  // client starts after 100 ms
         const auto latency = static_cast<int64_t>(uniform(rng) * max_latency_ms * kMs);
         in_flight.push_back({now + latency, sample});
         if (uniform(rng) < duplicates) {
@@ -284,5 +286,20 @@ TEST(JointVelocityPipeline, StreamEndingAtRestIsNotAStall) {
   EXPECT_EQ(pipeline.state(), State::kHolding);
   for (std::size_t i = 0; i < kNumJoints; ++i) {
     EXPECT_NEAR(pipeline.position()[i], trajectory.goal[i], 1e-4) << "joint " << i;
+  }
+}
+
+TEST(JointVelocityPipeline, StaircaseStreamStaysWithinLimits) {
+  // Velocities updated every 25 ms and republished every ms: steps of velocity, followed within
+  // the limits without failures of the trajectory generator
+  for (const int64_t playout_ms : {5, 30}) {
+    auto config = default_config(JointVelocityPipeline::Mode::kExternal);
+    config.playout_delay_ns = playout_ms * kMs;
+    config.stall_timeout_ns = 50 * kMs;
+    StreamSimulation sim(config);
+    sim.run(4000, 3200, 3.0, 0.0, 0.0, 25);
+    expect_velocities_within_limits(sim.commands, config.limits);
+    EXPECT_EQ(sim.pipeline.tracker_errors(), 0u) << "playout " << playout_ms << " ms";
+    EXPECT_EQ(sim.pipeline.counters().stalls, 0u);
   }
 }

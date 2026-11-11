@@ -232,11 +232,16 @@ class JointTracker {
       input_.max_acceleration[i] = limits_.ddq_max[i];
       input_.max_jerk[i] = limits_.dddq_max[i];
     }
+    // A target acceleration at the limit can leave Ruckig without a profile: then aim at the target
+    // velocity alone, always reachable from a state within the limits
     if (otg_.update(input_, output_) < 0) {
-      // Should not happen with valid limits: freeze rather than command an undefined state
-      ++errors_;
-      hold();
-      return;
+      input_.target_acceleration.fill(0.0);
+      if (otg_.update(input_, output_) < 0) {
+        // Should not happen with valid limits: freeze rather than command an undefined state
+        ++errors_;
+        hold();
+        return;
+      }
     }
     h2_ = h1_;
     h1_ = h0_;

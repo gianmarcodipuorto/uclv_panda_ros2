@@ -222,11 +222,16 @@ class JointVelocityTracker {
       input_.max_acceleration[i] = limits_.ddq_max[i];
       input_.max_jerk[i] = limits_.dddq_max[i];
     }
+    // A target acceleration at the limit can leave Ruckig without a profile: then aim at the target
+    // velocity alone, always reachable from a state within the limits
     if (otg_.update(input_, output_) < 0) {
-      // Should not happen with valid limits: keep the velocity rather than command an undefined state
-      ++errors_;
-      accept_sample(v_);
-      return;
+      input_.target_acceleration.fill(0.0);
+      if (otg_.update(input_, output_) < 0) {
+        // Should not happen with valid limits: keep the velocity rather than command an undefined state
+        ++errors_;
+        accept_sample(v_);
+        return;
+      }
     }
     u1_ = u0_;
     for (std::size_t i = 0; i < kNumJoints; ++i) {
