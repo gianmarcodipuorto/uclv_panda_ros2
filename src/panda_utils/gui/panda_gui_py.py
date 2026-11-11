@@ -101,7 +101,7 @@ class PandaGui:
 
         # ROW 2: Configure + Activate
         self.configure_btn = tk.Button(
-            button_frame, text="⚙️ Configure", 
+            button_frame, text="Configure", 
             command=self.on_configure,
             bg="#8BC34A", fg="white",
             font=("Arial", 14, "bold"),
@@ -110,7 +110,7 @@ class PandaGui:
         self.configure_btn.grid(row=1, column=0, sticky='ew', padx=(0, 5), pady=(0, 10))
 
         self.activate_btn = tk.Button(
-            button_frame, text="✅ Activate", 
+            button_frame, text="Activate", 
             command=self.on_activate,
             bg="#8BC34A", fg="white",
             font=("Arial", 14, "bold"),
@@ -120,7 +120,7 @@ class PandaGui:
 
         # ROW 3: Deactivate + Stop
         self.deactivate_btn = tk.Button(
-            button_frame, text="⏸️ Deactivate", 
+            button_frame, text="Deactivate", 
             command=self.on_deactivate,
             bg="#f44336", fg="white",
             font=("Arial", 14, "bold"),
@@ -129,7 +129,7 @@ class PandaGui:
         self.deactivate_btn.grid(row=2, column=0, sticky='ew', padx=(0, 5))
 
         self.stop_btn = tk.Button(
-            button_frame, text="🛑 Stop Controller", 
+            button_frame, text="Stop Controller", 
             command=self.on_stop_node,
             bg="#d32f2f", fg="white",
             font=("Arial", 14, "bold"),
@@ -461,7 +461,7 @@ class PandaGui:
         """Called when controller changes - rebuild UI"""
         if not self.start_button_enabled:  # Block if running
             self.controller_var.set(self.current_controller)
-            self.log("⚠️ Controller change blocked: Node running")
+            self.log("Controller change blocked: Node running")
             return
 
         new_controller = self.controller_var.get()
@@ -471,7 +471,7 @@ class PandaGui:
         self.params = self.param_configs[new_controller]
         self.build_params_ui()
 
-        self.log(f"🎛️ Selected: {self.controller_descriptions[new_controller]}")
+        self.log(f"Selected: {self.controller_descriptions[new_controller]}")
 
     def log(self, message):
         """Add timestamped log to console"""
@@ -587,7 +587,7 @@ class PandaGui:
             return
 
         command = f"source ~/uclv_panda_ros2/install/setup.bash && ros2 run panda_utils {node_name} {ros_params}"
-        self.log(f"🚀 Starting {node_name}...")
+        self.log(f"Starting {node_name}...")
         bash_command = f"bash -c '{command}'"
         self.run_command(bash_command)
 
@@ -596,7 +596,7 @@ class PandaGui:
             return
         node_name = self.controller_commands[self.current_controller]
         command = f"source ~/uclv_panda_ros2/install/setup.bash && ros2 lifecycle set /{node_name} configure"
-        self.log("⚙️ Configuring node...")
+        self.log("Configuring node...")
         bash_command = f"bash -c '{command}'"
         self.run_command(bash_command, block=True)
         messagebox.showinfo("Configure", f"{node_name} configured.")
@@ -609,7 +609,7 @@ class PandaGui:
             return
         node_name = self.controller_commands[self.current_controller]
         command = f"source ~/uclv_panda_ros2/install/setup.bash && ros2 lifecycle set /{node_name} activate"
-        self.log("✅ Activating node...")
+        self.log("Activating node...")
         bash_command = f"bash -c '{command}'"
         self.run_command(bash_command, block=True)
         messagebox.showinfo("Activate", f"{node_name} activated.")
@@ -621,7 +621,7 @@ class PandaGui:
             return
         node_name = self.controller_commands[self.current_controller]
         command = f"source ~/uclv_panda_ros2/install/setup.bash && ros2 lifecycle set /{node_name} deactivate"
-        self.log("⏸️ Deactivating node...")
+        self.log("Deactivating node...")
         bash_command = f"bash -c '{command}'"
         self.run_command(bash_command, block=True)
         messagebox.showinfo("Deactivate", f"{node_name} deactivated.")
@@ -632,7 +632,7 @@ class PandaGui:
         if not self.node_started:
             return
         node_name = self.controller_commands[self.current_controller]
-        self.log(f"🛑 Stopping {node_name}...")
+        self.log(f"Stopping {node_name}...")
 
         try:
             subprocess.run(f"pkill -INT -f {node_name}", shell=True, capture_output=True)
@@ -641,7 +641,7 @@ class PandaGui:
         except:
             pass
 
-        self.log(f"✅ {node_name} stopped.")
+        self.log(f"{node_name} stopped.")
         self.start_button_enabled = True
         self.node_started = False
         self.node_configured = False

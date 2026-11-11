@@ -10,6 +10,8 @@
 #include <memory>
 #include <thread>
 #include <chrono>
+#include <array>
+#include <iostream>
 
 double quintic_velocity(double q_i, double q_f, double t, double t_f) {
   if (t <= 0)
@@ -29,9 +31,31 @@ double quintic_velocity(double q_i, double q_f, double t, double t_f) {
 int main(int argc, char **argv) {
   rclcpp::init(argc, argv);
 
+  // Default joint positions
+  std::array<double, 7> default_positions = {
+    2.2071, 1.2788, 2.1047, -1.9131, -0.1979, 2.5894, 2.3336
+  };
+
+  // Parse command-line arguments for desired joint positions
+  std::array<double, 7> desired_positions = default_positions;
+  if (argc == 8) {  // program name + 7 joint values
+    try {
+      for (int i = 0; i < 7; i++) {
+        desired_positions[i] = std::stod(argv[i + 1]);
+      }
+    } catch (const std::exception& e) {
+      std::cerr << "Error parsing joint positions: " << e.what() << std::endl;
+      std::cerr << "Usage: " << argv[0] << " j0 j1 j2 j3 j4 j5 j6" << std::endl;
+      return 1;
+    }
+  } else if (argc > 1) {
+    std::cerr << "Expected 7 joint positions, got " << (argc - 1) << std::endl;
+    std::cerr << "Usage: " << argv[0] << " j0 j1 j2 j3 j4 j5 j6" << std::endl;
+    return 1;
+  }
 
   auto node = rclcpp::Node::make_shared("joint_traj_node");
-  rclcpp::Duration traj_duration(10, 0);
+  rclcpp::Duration traj_duration(30, 0);
   sensor_msgs::msg::JointState::SharedPtr joint_state;
 
     auto save_joints_state = [&joint_state](const sensor_msgs::msg::JointState::SharedPtr msg) {
@@ -96,11 +120,23 @@ int main(int argc, char **argv) {
     cmd.name = q0.name;
     cmd.velocity.resize(7);
     auto desired_goal = q0;
-    desired_goal.position[0] += 0.2;
-    desired_goal.position[3] += 0.3;
-    desired_goal.position[5] += 0.1;
-
-
+    for (size_t i = 0; i < 7; i++) {
+      desired_goal.position[i] = desired_positions[i];
+    }
+    // desired_goal.position[0] = 2.2071;
+    // desired_goal.position[1] = 1.2788;
+    // desired_goal.position[2] = 2.1047;
+    // desired_goal.position[3] = -1.9131;
+    // desired_goal.position[4] = -0.1979;
+    // desired_goal.position[5] = 2.5894;
+    // desired_goal.position[6] = 2.3336;
+    // desired_goal.position[0] = -2.2071;
+    // desired_goal.position[1] = 0.3287;
+    // desired_goal.position[2] = 2.53628;
+    // desired_goal.position[3] = -1.9728;
+    // desired_goal.position[4] = -0.2223;
+    // desired_goal.position[5] = 1.687;
+    // desired_goal.position[6] = 1.134;
     
     auto next_wake = std::chrono::steady_clock::now() + std::chrono::milliseconds(1);
     
