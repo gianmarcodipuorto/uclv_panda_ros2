@@ -32,7 +32,7 @@ int main(int argc, char **argv) {
 
 
   auto node = rclcpp::Node::make_shared("joint_traj_node");
-  rclcpp::Duration traj_duration(10, 0);
+  rclcpp::Duration traj_duration(2, 0);
   sensor_msgs::msg::JointState::SharedPtr joint_state;
 
     auto save_joints_state = [&joint_state](const sensor_msgs::msg::JointState::SharedPtr msg) {
@@ -99,15 +99,24 @@ int main(int argc, char **argv) {
     rclcpp::Duration t = rclcpp::Duration(0, 0);
     uclv_panda_interfaces::msg::JointsCommandedPositions cmd;
     auto desired_goal = q0;
-    desired_goal.position[0] += 0.2;
+    desired_goal.position[0] += -0.2;
+    desired_goal.position[1] += -0.2;
+    desired_goal.position[2] += -0.2;
+    desired_goal.position[3] += -0.2;
+    desired_goal.position[4] += -0.2;
+    desired_goal.position[5] += -0.2;
+    desired_goal.position[6] += -0.2;
+    
 
     
     auto next_wake = std::chrono::steady_clock::now() + std::chrono::milliseconds(1);
     
     while (rclcpp::ok() && t < traj_duration) {
     // auto old_t = cmd.header.stamp;
-    t = node->now() - t0;
-    cmd.header.stamp = node->now();  // Subito dopo il calcolo di t
+    // The stamp is the instant the positions refer to: the bridge plays the samples back by it
+    const rclcpp::Time sample_time = node->now();
+    t = sample_time - t0;
+    cmd.header.stamp = sample_time;
     for (size_t i = 0; i < 7; i++) {
     cmd.positions[i] =quintic(q0.position[i], desired_goal.position[i], t.seconds(), traj_duration.seconds());     
     }

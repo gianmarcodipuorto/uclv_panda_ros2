@@ -85,6 +85,11 @@ ament_target_dependencies(simple_joints_traj rclcpp uclv_panda_interfaces std_ms
 add_executable(simple_velocity_traj ./src/simple_velocity_joint_traj.cpp)
 ament_target_dependencies(simple_velocity_traj rclcpp uclv_panda_interfaces std_msgs tf2_eigen sensor_msgs rclcpp_lifecycle realtime_tools geometry_msgs)
 
+add_executable(simple_torque_cmd src/simple_torque_cmd.cpp)
+ament_target_dependencies(simple_torque_cmd rclcpp sensor_msgs realtime_tools)
+
+add_executable(simple_cartesian_traj src/simple_cartesian_traj.cpp)
+ament_target_dependencies(simple_cartesian_traj rclcpp geometry_msgs uclv_panda_interfaces realtime_tools tf2_eigen)
 
 
 install(TARGETS
@@ -95,6 +100,8 @@ install(TARGETS
   panda_cartesian_position_bridge
   simple_joints_traj
   simple_velocity_traj
+  simple_torque_cmd
+  simple_cartesian_traj
   panda_gui
 
   DESTINATION lib/${PROJECT_NAME}

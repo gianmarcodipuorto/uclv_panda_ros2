@@ -55,7 +55,7 @@ int main(int argc, char **argv) {
   }
 
   auto node = rclcpp::Node::make_shared("joint_traj_node");
-  rclcpp::Duration traj_duration(30, 0);
+  rclcpp::Duration traj_duration(5, 0);
   sensor_msgs::msg::JointState::SharedPtr joint_state;
 
     auto save_joints_state = [&joint_state](const sensor_msgs::msg::JointState::SharedPtr msg) {
@@ -142,8 +142,10 @@ int main(int argc, char **argv) {
     
     while (rclcpp::ok() && t < traj_duration) {
     // auto old_t = cmd.header.stamp;
-    t = node->now() - t0;
-    cmd.header.stamp = node->now();  // Subito dopo il calcolo di t
+    // The stamp is the instant the velocities refer to: the bridge plays the samples back by it
+    const rclcpp::Time sample_time = node->now();
+    t = sample_time - t0;
+    cmd.header.stamp = sample_time;
     for (size_t i = 0; i < 7; i++) {
     cmd.velocity[i] =quintic_velocity(q0.position[i], desired_goal.position[i], t.seconds(), traj_duration.seconds());     
     }
