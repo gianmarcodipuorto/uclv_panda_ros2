@@ -80,10 +80,12 @@ add_executable(panda_cartesian_velocity_bridge src/panda_cartesian_velocity_brid
 target_link_libraries(panda_cartesian_velocity_bridge panda_bridge_core)
 
 add_executable(simple_joints_traj ./src/simple_joint_traj.cpp)
-ament_target_dependencies(simple_joints_traj rclcpp uclv_panda_interfaces std_msgs tf2_eigen sensor_msgs rclcpp_lifecycle realtime_tools geometry_msgs)
+ament_target_dependencies(simple_joints_traj rclcpp uclv_panda_interfaces std_msgs tf2_eigen sensor_msgs
+  rclcpp_lifecycle realtime_tools geometry_msgs)
 
 add_executable(simple_velocity_traj ./src/simple_velocity_joint_traj.cpp)
-ament_target_dependencies(simple_velocity_traj rclcpp uclv_panda_interfaces std_msgs tf2_eigen sensor_msgs rclcpp_lifecycle realtime_tools geometry_msgs)
+ament_target_dependencies(simple_velocity_traj rclcpp uclv_panda_interfaces std_msgs tf2_eigen sensor_msgs
+  rclcpp_lifecycle realtime_tools geometry_msgs)
 
 add_executable(simple_torque_cmd src/simple_torque_cmd.cpp)
 ament_target_dependencies(simple_torque_cmd rclcpp sensor_msgs realtime_tools)
@@ -133,6 +135,9 @@ if(BUILD_TESTING)
   # comment the line when this package is in a git repo and when
   # a copyright and license is added to all source files
   set(ament_cmake_cpplint_FOUND TRUE)
+  # The code does not follow the ROS formatting style: the style linters would fail on every file
+  # and hide the failures that matter
+  set(AMENT_LINT_AUTO_EXCLUDE ament_cmake_uncrustify ament_cmake_flake8 ament_cmake_pep257)
   ament_lint_auto_find_test_dependencies()
 
   find_package(ament_cmake_gtest REQUIRED)
