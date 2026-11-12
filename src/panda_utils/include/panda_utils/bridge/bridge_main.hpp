@@ -26,8 +26,9 @@ int run_bridge(int argc, char *argv[]) {
     RCLCPP_WARN(node->get_logger(), "Could not set SCHED_FIFO priority %d for the executor", priority);
   }
 
-  // One thread per callback group: lifecycle, command stream, actions and services, recovery
-  rclcpp::executors::MultiThreadedExecutor executor(rclcpp::ExecutorOptions(), 4);
+  // One thread per callback group: lifecycle, command stream, actions and services, recovery,
+  // gripper
+  rclcpp::executors::MultiThreadedExecutor executor(rclcpp::ExecutorOptions(), 5);
   executor.add_node(node->get_node_base_interface());
   executor.spin();
   rclcpp::shutdown();

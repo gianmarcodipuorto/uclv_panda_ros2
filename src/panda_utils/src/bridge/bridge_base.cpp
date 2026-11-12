@@ -53,6 +53,7 @@ BridgeBase::BridgeBase(const std::string &node_name, const rclcpp::NodeOptions &
   command_group_ = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
   services_group_ = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
   recovery_group_ = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+  gripper_group_ = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
   declare_common_parameters();
 }
 
@@ -67,6 +68,14 @@ void BridgeBase::declare_common_parameters() {
   declare_parameter<bool>("fake_robot", false);
   declare_parameter<double>("fake_packet_loss", 0.0);
   declare_parameter<double>("fake_tracking_offset", 0.0);
+  // Test only: width of an object between the fingers of the simulated gripper, 0 = none
+  declare_parameter<double>("fake_gripper_object_width", 0.0);
+  // Franka Hand: speed of the fingers and grasping force when a goal leaves them at 0
+  declare_parameter<bool>("use_gripper", true);
+  declare_parameter<double>("gripper_speed", 0.1);
+  declare_parameter<double>("gripper_force", 20.0);
+  declare_parameter<std::vector<std::string>>("gripper_joint_names",
+                                              std::vector<std::string>{"fer_finger_joint1", "fer_finger_joint2"});
   declare_parameter<double>("publish_freq", 100.0);
   declare_parameter<bool>("show_details", false);
   declare_parameter<std::vector<double>>("flange_T_ee_translation", std::vector<double>{0.0, 0.0, 0.0});
@@ -110,7 +119,23 @@ bool BridgeBase::read_common_parameters(std::string &error) {
   p.lock_memory = get_parameter("lock_memory").as_bool();
   p.limit_rate = get_parameter("limit_rate").as_bool();
   p.lpf_cutoff_frequency = get_parameter("lpf_cutoff_frequency").as_double();
+  p.use_gripper = get_parameter("use_gripper").as_bool();
+  p.gripper.speed = get_parameter("gripper_speed").as_double();
+  p.gripper.force = get_parameter("gripper_force").as_double();
+  p.gripper.joint_names = get_parameter("gripper_joint_names").as_string_array();
 
+  if (!(p.gripper.speed > 0.0)) {
+    error = "gripper_speed must be positive";
+    return false;
+  }
+  if (!(p.gripper.force > 0.0 && p.gripper.force <= GripperServer::kMaxForce)) {
+    error = "gripper_force must be in (0, 70] N";
+    return false;
+  }
+  if (p.gripper.joint_names.size() != 2) {
+    error = "gripper_joint_names needs 2 names";
+    return false;
+  }
   if (!(p.publish_freq > 0.0 && p.publish_freq <= 1000.0)) {
     error = "publish_freq must be in (0, 1000] Hz";
     return false;
@@ -205,6 +230,9 @@ BridgeBase::CallbackReturn BridgeBase::on_configure(const rclcpp_lifecycle::Stat
       [this](const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
              std::shared_ptr<std_srvs::srv::Trigger::Response> response) { on_error_recovery(request, response); },
       rclcpp::ServicesQoS(), recovery_group_);
+  if (params_.use_gripper) {
+    start_gripper();
+  }
 
   if (!configure_bridge()) {
     teardown();
@@ -219,6 +247,25 @@ BridgeBase::CallbackReturn BridgeBase::on_configure(const rclcpp_lifecycle::Stat
   publisher_thread_ = std::thread(&BridgeBase::publisher_thread_main, this);
   RCLCPP_INFO(get_logger(), "Configured");
   return CallbackReturn::SUCCESS;
+}
+
+void BridgeBase::start_gripper() {
+  try {
+    std::unique_ptr<GripperBackend> backend;
+    if (params_.fake_robot) {
+      backend = std::make_unique<FakeGripperBackend>(get_parameter("fake_gripper_object_width").as_double());
+    } else {
+      backend = std::make_unique<FrankaGripperBackend>(params_.robot_ip);
+    }
+    gripper_ = std::make_unique<GripperServer>(*this, std::move(backend), params_.gripper, gripper_group_);
+    RCLCPP_INFO(get_logger(), "Franka Hand connected: /panda/gripper ready");
+  } catch (const franka::Exception &e) {
+    gripper_.reset();
+    RCLCPP_WARN(get_logger(),
+                "No Franka Hand (%s): the bridge works without /panda/gripper. "
+                "Set use_gripper to false if the robot has no hand",
+                e.what());
+  }
 }
 
 BridgeBase::CallbackReturn BridgeBase::on_activate(const rclcpp_lifecycle::State &) {
@@ -278,6 +325,7 @@ void BridgeBase::teardown() {
   if (backend_) {
     stop_control();
   }
+  gripper_.reset();
   cleanup_bridge();
   stop_threads();
   recovery_srv_.reset();

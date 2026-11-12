@@ -19,6 +19,7 @@
 #include "uclv_panda_interfaces/msg/bridge_status.hpp"
 #include "uclv_panda_interfaces/msg/panda_robot_state.hpp"
 
+#include "panda_utils/bridge/gripper_server.hpp"
 #include "panda_utils/bridge/robot_backend.hpp"
 #include "panda_utils/bridge/rt_exchange.hpp"
 
@@ -35,6 +36,8 @@ namespace panda_bridge {
 //
 // Errors of the control loop (reflexes, safety stops) leave the node active, with state "error"
 // in /panda/bridge_status, until /panda/error_recovery restarts it.
+// From configure to cleanup the node also serves the Franka Hand (GripperServer), on a connection
+// of its own: in every bridge and mode, whatever the control loop is doing.
 // Derived destructors must call teardown() while their members still exist.
 class BridgeBase : public rclcpp_lifecycle::LifecycleNode {
  public:
@@ -69,6 +72,8 @@ class BridgeBase : public rclcpp_lifecycle::LifecycleNode {
     bool limit_rate{true};
     double lpf_cutoff_frequency{100.0};
     RobotSettings robot;
+    bool use_gripper{true};
+    GripperServer::Params gripper;
   };
 
   // --- implemented by the bridges ---
@@ -117,6 +122,8 @@ class BridgeBase : public rclcpp_lifecycle::LifecycleNode {
 
   void declare_common_parameters();
   bool read_common_parameters(std::string &error);
+  // Connects to the Franka Hand; without one the bridge works anyway, without /panda/gripper
+  void start_gripper();
   void robot_thread_main();
   void run_control_session();
   void read_idle_state();
@@ -136,6 +143,8 @@ class BridgeBase : public rclcpp_lifecycle::LifecycleNode {
   rclcpp::CallbackGroup::SharedPtr command_group_;
   rclcpp::CallbackGroup::SharedPtr services_group_;
   rclcpp::CallbackGroup::SharedPtr recovery_group_;
+  rclcpp::CallbackGroup::SharedPtr gripper_group_;
+  std::unique_ptr<GripperServer> gripper_;
 
   // Plain publishers, not lifecycle-managed: the state is published while inactive too
   rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr joint_state_pub_;

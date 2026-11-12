@@ -18,6 +18,7 @@
 
 #include "panda_utils/bridge/cartesian_bridge.hpp"
 #include "panda_utils/bridge/joint_bridge.hpp"
+#include "uclv_panda_interfaces/action/gripper.hpp"
 #include "uclv_panda_interfaces/msg/bridge_status.hpp"
 
 using lifecycle_msgs::msg::State;
@@ -35,6 +36,16 @@ const std::array<double, 7> kStart{0.0, -M_PI_4, 0.0, -3 * M_PI_4, 0.0, M_PI_2, 
 
 using JointTraj = uclv_panda_interfaces::action::JointTraj;
 using CartTraj = uclv_panda_interfaces::action::CartTraj;
+using Gripper = uclv_panda_interfaces::action::Gripper;
+using GripperGoalHandle = rclcpp_action::ClientGoalHandle<Gripper>;
+
+// Opening of the fake gripper when open [m]
+constexpr double kGripperMaxWidth = 0.08;
+
+struct GripperOutcome {
+  rclcpp_action::ResultCode code{rclcpp_action::ResultCode::UNKNOWN};
+  Gripper::Result result;
+};
 
 // Initial end effector pose of the fake robot: identity orientation at (0.3, 0, 0.5)
 const std::array<double, 3> kStartEE{0.3, 0.0, 0.5};
@@ -54,9 +65,11 @@ class BridgeTest : public ::testing::Test {
   static void TearDownTestSuite() { rclcpp::shutdown(); }
 
   template <typename Bridge>
-  void start(const std::string &mode) {
+  void start(const std::string &mode, const std::vector<rclcpp::Parameter> &extra_parameters = {}) {
     rclcpp::NodeOptions options;
-    options.parameter_overrides({{"fake_robot", true}, {"publish_freq", 200.0}, {"mode", mode}});
+    std::vector<rclcpp::Parameter> parameters{{"fake_robot", true}, {"publish_freq", 200.0}, {"mode", mode}};
+    parameters.insert(parameters.end(), extra_parameters.begin(), extra_parameters.end());
+    options.parameter_overrides(parameters);
     bridge = std::make_shared<Bridge>(options);
     client = rclcpp::Node::make_shared("bridge_test_client");
     status_sub = client->create_subscription<uclv_panda_interfaces::msg::BridgeStatus>(
@@ -70,20 +83,84 @@ class BridgeTest : public ::testing::Test {
           q = msg->q;
           ee = msg->o_t_ee;
         });
-    executor = std::make_unique<rclcpp::executors::MultiThreadedExecutor>(rclcpp::ExecutorOptions(), 4);
+    executor = std::make_unique<rclcpp::executors::MultiThreadedExecutor>(rclcpp::ExecutorOptions(), 6);
     executor->add_node(bridge->get_node_base_interface());
     executor->add_node(client);
     spinner = std::thread([this] { executor->spin(); });
   }
 
-  void TearDown() override {
+  void TearDown() override { stop_all(); }
+
+  // Stops spinning and destroys the bridge and the client, so that another bridge can start
+  void stop_all() {
     if (executor) {
       executor->cancel();
     }
     if (spinner.joinable()) {
       spinner.join();
     }
+    executor.reset();
+    gripper_client.reset();
+    status_sub.reset();
+    robot_state_sub.reset();
+    client.reset();
     bridge.reset();
+  }
+
+  // Sends a gripper goal: its handle, or nullptr if the goal was rejected or there is no server
+  GripperGoalHandle::SharedPtr send_gripper_goal(uint8_t command, double width = 0.0, double speed = 0.0,
+                                                 double force = 0.0) {
+    if (!gripper_client) {
+      gripper_client = rclcpp_action::create_client<Gripper>(client, "/panda/gripper");
+    }
+    if (!gripper_client->wait_for_action_server(2s)) {
+      return nullptr;
+    }
+    Gripper::Goal goal;
+    goal.command = command;
+    goal.width = width;
+    goal.speed = speed;
+    goal.force = force;
+    auto future = gripper_client->async_send_goal(goal);
+    if (future.wait_for(2s) != std::future_status::ready) {
+      return nullptr;
+    }
+    return future.get();
+  }
+
+  GripperOutcome wait_gripper_result(const GripperGoalHandle::SharedPtr &handle) {
+    GripperOutcome outcome;
+    if (!handle) {
+      return outcome;
+    }
+    auto future = gripper_client->async_get_result(handle);
+    if (future.wait_for(5s) != std::future_status::ready) {
+      return outcome;
+    }
+    const auto wrapped = future.get();
+    outcome.code = wrapped.code;
+    outcome.result = *wrapped.result;
+    return outcome;
+  }
+
+  GripperOutcome run_gripper(uint8_t command, double width = 0.0, double speed = 0.0, double force = 0.0) {
+    return wait_gripper_result(send_gripper_goal(command, width, speed, force));
+  }
+
+  // The gripper opens and moves while the bridge is inactive and while it is active
+  template <typename Bridge>
+  void expect_gripper_served(const std::string &mode) {
+    start<Bridge>(mode);
+    ASSERT_EQ(bridge->configure().id(), State::PRIMARY_STATE_INACTIVE);
+    GripperOutcome outcome = run_gripper(Gripper::Goal::MOVE, 0.07);
+    EXPECT_EQ(outcome.code, rclcpp_action::ResultCode::SUCCEEDED) << bridge->get_name() << " inactive";
+    EXPECT_NEAR(outcome.result.width, 0.07, 1e-3);
+    ASSERT_EQ(bridge->activate().id(), State::PRIMARY_STATE_ACTIVE);
+    outcome = run_gripper(Gripper::Goal::OPEN);
+    EXPECT_EQ(outcome.code, rclcpp_action::ResultCode::SUCCEEDED) << bridge->get_name() << " active, " << mode;
+    EXPECT_NEAR(outcome.result.width, kGripperMaxWidth, 1e-3);
+    shut_down();
+    stop_all();
   }
 
   std::string state() {
@@ -211,6 +288,7 @@ class BridgeTest : public ::testing::Test {
 
   std::shared_ptr<panda_bridge::BridgeBase> bridge;
   rclcpp::Node::SharedPtr client;
+  rclcpp_action::Client<Gripper>::SharedPtr gripper_client;
   rclcpp::Subscription<uclv_panda_interfaces::msg::BridgeStatus>::SharedPtr status_sub;
   rclcpp::Subscription<uclv_panda_interfaces::msg::PandaRobotState>::SharedPtr robot_state_sub;
   std::unique_ptr<rclcpp::executors::MultiThreadedExecutor> executor;
@@ -399,6 +477,130 @@ TEST_F(BridgeTest, CartesianVelocityFollowsTwistStream) {
   // 4.5 cm streamed, plus the gap bridged before the stall and the deceleration
   EXPECT_NEAR(ee_position()[0], kStartEE[0] + 0.046, 0.003);
   shut_down();
+}
+
+TEST_F(BridgeTest, GripperServedByEveryBridgeInEveryMode) {
+  expect_gripper_served<JointPositionsBridge>("external");
+  expect_gripper_served<JointVelocitiesBridge>("internal");
+  expect_gripper_served<JointTorquesBridge>("external");
+  expect_gripper_served<JointTorquesBridge>("internal");
+  expect_gripper_served<CartesianPoseBridge>("internal");
+  expect_gripper_served<CartesianVelocitiesBridge>("external");
+}
+
+TEST_F(BridgeTest, GripperClosesOpensAndPublishesItsState) {
+  start<JointPositionsBridge>("external");
+  std::mutex state_mutex;
+  sensor_msgs::msg::JointState gripper_state;
+  auto state_sub = client->create_subscription<sensor_msgs::msg::JointState>(
+      "/panda/gripper_state", 10, [&](sensor_msgs::msg::JointState::SharedPtr msg) {
+        std::lock_guard<std::mutex> lock(state_mutex);
+        gripper_state = *msg;
+      });
+  activate();
+
+  // Nothing between the fingers: they close fully
+  GripperOutcome outcome = run_gripper(Gripper::Goal::CLOSE);
+  EXPECT_EQ(outcome.code, rclcpp_action::ResultCode::SUCCEEDED);
+  EXPECT_TRUE(outcome.result.success);
+  EXPECT_LT(outcome.result.width, 1e-3);
+  EXPECT_EQ(outcome.result.message, "closed: nothing between the fingers");
+  std::this_thread::sleep_for(100ms);
+  {
+    std::lock_guard<std::mutex> lock(state_mutex);
+    ASSERT_EQ(gripper_state.name.size(), 2u);
+    EXPECT_EQ(gripper_state.name[0], "fer_finger_joint1");
+    EXPECT_LT(gripper_state.position[0], 1e-3);
+  }
+
+  outcome = run_gripper(Gripper::Goal::OPEN);
+  EXPECT_EQ(outcome.code, rclcpp_action::ResultCode::SUCCEEDED);
+  EXPECT_NEAR(outcome.result.width, kGripperMaxWidth, 1e-3);
+  std::this_thread::sleep_for(100ms);
+  {
+    std::lock_guard<std::mutex> lock(state_mutex);
+    EXPECT_NEAR(gripper_state.position[0] + gripper_state.position[1], kGripperMaxWidth, 1e-3);
+  }
+  // The arm never noticed
+  EXPECT_EQ(state(), "holding");
+  state_sub.reset();
+  shut_down();
+}
+
+TEST_F(BridgeTest, GripperGraspsAnObject) {
+  start<CartesianPoseBridge>("internal", {{"fake_gripper_object_width", 0.03}});
+  activate();
+  GripperOutcome outcome = run_gripper(Gripper::Goal::CLOSE, 0.0, 0.0, 40.0);
+  EXPECT_EQ(outcome.code, rclcpp_action::ResultCode::SUCCEEDED);
+  EXPECT_NEAR(outcome.result.width, 0.03, 1e-3);
+  EXPECT_EQ(outcome.result.message, "holding an object 30.0 mm wide");
+
+  // An object of the expected width is grasped, one of another width is not
+  ASSERT_EQ(run_gripper(Gripper::Goal::OPEN).code, rclcpp_action::ResultCode::SUCCEEDED);
+  outcome = run_gripper(Gripper::Goal::CLOSE, 0.032);
+  EXPECT_EQ(outcome.code, rclcpp_action::ResultCode::SUCCEEDED);
+  ASSERT_EQ(run_gripper(Gripper::Goal::OPEN).code, rclcpp_action::ResultCode::SUCCEEDED);
+  outcome = run_gripper(Gripper::Goal::CLOSE, 0.05);
+  EXPECT_EQ(outcome.code, rclcpp_action::ResultCode::ABORTED);
+  EXPECT_FALSE(outcome.result.success);
+  EXPECT_EQ(outcome.result.message, "no object of 50.0 mm: fingers at 30.0 mm");
+  shut_down();
+}
+
+TEST_F(BridgeTest, GripperNewGoalPreemptsTheRunningOne) {
+  start<JointVelocitiesBridge>("external");
+  ASSERT_EQ(bridge->configure().id(), State::PRIMARY_STATE_INACTIVE);
+  // Slow close (1.6 s), then open after 300 ms
+  auto closing = send_gripper_goal(Gripper::Goal::CLOSE, 0.0, 0.05);
+  ASSERT_NE(closing, nullptr);
+  std::this_thread::sleep_for(300ms);
+  auto opening = send_gripper_goal(Gripper::Goal::OPEN);
+  ASSERT_NE(opening, nullptr);
+  const GripperOutcome closed = wait_gripper_result(closing);
+  EXPECT_EQ(closed.code, rclcpp_action::ResultCode::ABORTED);
+  EXPECT_EQ(closed.result.message, "preempted by a newer goal");
+  EXPECT_GT(closed.result.width, 0.03);
+  const GripperOutcome opened = wait_gripper_result(opening);
+  EXPECT_EQ(opened.code, rclcpp_action::ResultCode::SUCCEEDED);
+  EXPECT_NEAR(opened.result.width, kGripperMaxWidth, 1e-3);
+  ASSERT_EQ(bridge->cleanup().id(), State::PRIMARY_STATE_UNCONFIGURED);
+}
+
+TEST_F(BridgeTest, GripperCancelStopsTheFingers) {
+  start<JointTorquesBridge>("internal");
+  activate();
+  auto moving = send_gripper_goal(Gripper::Goal::MOVE, 0.0, 0.05);
+  ASSERT_NE(moving, nullptr);
+  std::this_thread::sleep_for(300ms);
+  gripper_client->async_cancel_goal(moving);
+  const GripperOutcome outcome = wait_gripper_result(moving);
+  EXPECT_EQ(outcome.code, rclcpp_action::ResultCode::CANCELED);
+  EXPECT_EQ(outcome.result.message, "canceled");
+  // Stopped on the way: 1.5 cm or so closed in 300 ms
+  EXPECT_GT(outcome.result.width, 0.03);
+  EXPECT_LT(outcome.result.width, kGripperMaxWidth - 0.005);
+  shut_down();
+}
+
+TEST_F(BridgeTest, GripperRejectsInvalidGoals) {
+  start<JointPositionsBridge>("internal");
+  ASSERT_EQ(bridge->configure().id(), State::PRIMARY_STATE_INACTIVE);
+  EXPECT_EQ(send_gripper_goal(Gripper::Goal::CLOSE, 0.0, 0.0, 100.0), nullptr);   // above 70 N
+  EXPECT_EQ(send_gripper_goal(Gripper::Goal::MOVE, 0.2), nullptr);                // wider than the gripper
+  EXPECT_EQ(send_gripper_goal(Gripper::Goal::MOVE, -0.01), nullptr);
+  EXPECT_EQ(send_gripper_goal(7), nullptr);                                       // unknown command
+  EXPECT_EQ(send_gripper_goal(Gripper::Goal::OPEN, 0.0, -1.0), nullptr);          // negative speed
+  EXPECT_NE(send_gripper_goal(Gripper::Goal::HOMING), nullptr);
+  ASSERT_EQ(bridge->cleanup().id(), State::PRIMARY_STATE_UNCONFIGURED);
+}
+
+TEST_F(BridgeTest, NoGripperWhenDisabled) {
+  start<JointPositionsBridge>("external", {{"use_gripper", false}});
+  ASSERT_EQ(bridge->configure().id(), State::PRIMARY_STATE_INACTIVE);
+  auto action_client = rclcpp_action::create_client<Gripper>(client, "/panda/gripper");
+  EXPECT_FALSE(action_client->wait_for_action_server(1s));
+  action_client.reset();
+  ASSERT_EQ(bridge->cleanup().id(), State::PRIMARY_STATE_UNCONFIGURED);
 }
 
 TEST_F(BridgeTest, CartesianVelocityExecutesGoalsInInternalMode) {

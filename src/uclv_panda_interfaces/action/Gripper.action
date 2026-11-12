@@ -1,0 +1,25 @@
+# Franka Hand command. Every bridge serves it, in both modes, from Configure until Cleanup.
+# Move to the maximum width
+uint8 OPEN=0
+# Grasp: close with `force` until the fingers stop on an object, or close fully
+uint8 CLOSE=1
+# Move to `width`, without force control
+uint8 MOVE=2
+# Calibrate the maximum width, needed after changing the fingers
+uint8 HOMING=3
+
+uint8 command
+# MOVE: opening to reach [m]. CLOSE: width of the object to grasp [m], 0 = any object, or none
+float64 width
+# Finger speed [m/s], 0 = gripper_speed parameter of the bridge
+float64 speed
+# CLOSE only: grasping force [N], 0 = gripper_force parameter of the bridge
+float64 force
+---
+bool success
+# Opening of the fingers at the end [m]
+float64 width
+string message
+---
+# Current opening of the fingers [m]
+float64 width

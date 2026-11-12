@@ -43,10 +43,12 @@ set(CMAKE_AUTORCC ON)
 
 include_directories(include)
 
-# Infrastructure shared by the bridges: command pipeline, robot backend, lifecycle base node
+# Shared by the bridges: command pipeline, robot and gripper backends, lifecycle base node
 add_library(panda_bridge_core STATIC
   src/bridge/pipeline.cpp
   src/bridge/robot_backend.cpp
+  src/bridge/gripper_backend.cpp
+  src/bridge/gripper_server.cpp
   src/bridge/state_conversions.cpp
   src/bridge/bridge_base.cpp
   src/bridge/joint_bridge.cpp
