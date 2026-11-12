@@ -1,3 +1,8 @@
+<p align="right">
+  <a href="README.md"><img src="https://img.shields.io/badge/Italiano-0969da?style=for-the-badge" alt="Italiano"></a>
+  <a href="README.en.md"><img src="https://img.shields.io/badge/English-8c959f?style=for-the-badge" alt="English"></a>
+</p>
+
 # uclv_panda_ros2: driver ROS 2 per il Franka Panda
 
 Driver ROS 2 Jazzy per il Franka Panda (FER, System 4.x) con libfranka 0.9.2. Si usa da una GUI, oppure comandando il robot dai propri nodi attraverso dei topic. Per il Franka Research 3 (FR3) usa invece [franka_ros2](https://github.com/frankaemika/franka_ros2).

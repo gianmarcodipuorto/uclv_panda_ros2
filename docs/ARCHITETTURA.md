@@ -1,3 +1,8 @@
+<p align="right">
+  <a href="ARCHITETTURA.md"><img src="https://img.shields.io/badge/Italiano-0969da?style=for-the-badge" alt="Italiano"></a>
+  <a href="ARCHITETTURA.en.md"><img src="https://img.shields.io/badge/English-8c959f?style=for-the-badge" alt="English"></a>
+</p>
+
 # Come funzionano i bridge
 
 Questa pagina è per chi modifica il codice. Per usare il driver basta il [README](../README.md).
