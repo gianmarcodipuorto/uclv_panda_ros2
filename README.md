@@ -1,6 +1,6 @@
 # uclv_panda_ros2: driver ROS 2 per il Franka Panda
 
-Driver ROS 2 Jazzy per il Franka Panda (FER, System 4.x) con libfranka 0.9.2. Si usa da una GUI, oppure comandando il robot dai propri nodi attraverso dei topic.
+Driver ROS 2 Jazzy per il Franka Panda (FER, System 4.x) con libfranka 0.9.2. Si usa da una GUI, oppure comandando il robot dai propri nodi attraverso dei topic. Per il Franka Research 3 (FR3) usa invece [franka_ros2](https://github.com/frankaemika/franka_ros2).
 
 ![La GUI con il bridge attivo](docs/images/gui_external.png)
 
@@ -10,16 +10,17 @@ Il codice precedente a questa versione è nel branch [`old`](https://github.com/
 
 1. [Come è fatto](#come-è-fatto)
 2. [Installazione](#installazione)
-3. [Avvio rapido](#avvio-rapido)
-4. [La GUI](#la-gui)
-5. [Comandare il robot da un proprio programma](#comandare-il-robot-da-un-proprio-programma)
-6. [Moti interni: goal e preset](#moti-interni-goal-e-preset)
-7. [Stato, errori e ripresa](#stato-errori-e-ripresa)
-8. [Parametri](#parametri)
-9. [Provare senza robot](#provare-senza-robot)
-10. [Prove sul robot](#prove-sul-robot)
-11. [Test automatici](#test-automatici)
-12. [PC real-time](#pc-real-time)
+3. [PC real-time](#pc-real-time)
+4. [Collegare il robot](#collegare-il-robot)
+5. [Avvio rapido](#avvio-rapido)
+6. [La GUI](#la-gui)
+7. [Comandare il robot da un proprio programma](#comandare-il-robot-da-un-proprio-programma)
+8. [Moti interni: goal e preset](#moti-interni-goal-e-preset)
+9. [Stato, errori e ripresa](#stato-errori-e-ripresa)
+10. [Parametri](#parametri)
+11. [Provare senza robot](#provare-senza-robot)
+12. [Prove sul robot](#prove-sul-robot)
+13. [Test automatici](#test-automatici)
 
 ## Come è fatto
 
@@ -46,39 +47,96 @@ Per sapere come funziona dentro, e dove sono i file: [docs/ARCHITETTURA.md](docs
 
 Servono:
 
-- Ubuntu 24.04 con ROS 2 Jazzy e un kernel PREEMPT_RT (vedi [PC real-time](#pc-real-time));
-- **libfranka 0.9.2**, l'ultima versione compatibile con il Panda, compilata da sorgente e installata in `/usr/local`;
-- i pacchetti ROS `ruckig` e `realtime_tools`, e `python3-tk` per la GUI.
+- un Panda (FER) con System 4.2.1 o una versione 4.x successiva, con la feature FCI installata (in Desk: Settings → System → Installed Features);
+- un PC con Ubuntu 24.04, [ROS 2 Jazzy](https://docs.ros.org/en/jazzy/Installation/Ubuntu-Install-Debs.html) e un kernel real-time (vedi [PC real-time](#pc-real-time));
+- **libfranka 0.9.2**, l'ultima versione compatibile con il Panda, compilata da sorgente.
 
 ```bash
-# libfranka 0.9.2
+# 1. libfranka 0.9.2, in ~/libfranka
 sudo apt install -y build-essential cmake git libpoco-dev libeigen3-dev
-git clone --recursive --branch 0.9.2 https://github.com/frankaemika/libfranka.git
-cd libfranka && mkdir build && cd build
+git clone --recursive --branch 0.9.2 https://github.com/frankaemika/libfranka.git ~/libfranka
+cd ~/libfranka && mkdir build && cd build
 cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF ..
-cmake --build . -j4 && sudo cmake --install .
+cmake --build . -j4 && sudo cmake --install . && sudo ldconfig
 
-# dipendenze ROS e GUI
-sudo apt install -y ros-jazzy-ruckig ros-jazzy-realtime-tools python3-tk
+# 2. dipendenze ROS, della GUI e della build
+sudo apt install -y ros-jazzy-ruckig ros-jazzy-realtime-tools python3-tk qtbase5-dev python3-colcon-common-extensions
 
-# questo workspace
+# 3. questo repository, in ~/uclv_panda_ros2
+git clone https://github.com/gianmarcodipuorto/uclv_panda_ros2.git ~/uclv_panda_ros2
 cd ~/uclv_panda_ros2
+source /opt/ros/jazzy/setup.bash
 colcon build --packages-select uclv_panda_interfaces panda_utils --cmake-args -DCMAKE_BUILD_TYPE=Release
 source install/setup.bash
 ```
 
+I comandi di questa pagina suppongono il repository in `~/uclv_panda_ros2`: se lo cloni altrove, cambia il percorso. Per non ripetere il `source` in ogni terminale: `echo "source ~/uclv_panda_ros2/install/setup.bash" >> ~/.bashrc`.
+
+> Non installare `ros-jazzy-libfranka`: è una versione più recente, solo per l'FR3, e CMake potrebbe usarla al posto della 0.9.2.
+
 > Prima di ricompilare chiudi il bridge (Stop Controller nella GUI). colcon non può sovrascrivere un eseguibile in uso, e al robot si collega un solo bridge alla volta. Se la GUI è già chiusa e un bridge è rimasto aperto: `pkill -INT -f lib/panda_utils/panda_`.
+
+## PC real-time
+
+libfranka vuole un kernel real-time e i permessi per usarlo: senza, il Configure del bridge fallisce. Si prepara una volta sola.
+
+1. **Kernel PREEMPT_RT.** Su Ubuntu 24.04 il modo più semplice è il kernel real-time di Ubuntu Pro, gratuito per uso personale:
+   ```bash
+   sudo pro attach                    # con il token del tuo account Ubuntu Pro
+   sudo pro enable realtime-kernel
+   ```
+   In alternativa compilalo seguendo la [guida di Franka](https://frankarobotics.github.io/docs/doc/libfranka/docs/real_time_kernel.html). Dopo il riavvio `uname -v` deve contenere `PREEMPT_RT`.
+2. **Permessi real-time** per il tuo utente:
+   ```bash
+   sudo addgroup realtime
+   sudo usermod -a -G realtime $(whoami)
+   ```
+   Poi aggiungi queste righe a `/etc/security/limits.conf`, ed esci e rientra dalla sessione. `ulimit -r` deve dare 99.
+   ```
+   @realtime soft rtprio 99
+   @realtime soft priority 99
+   @realtime soft memlock 102400
+   @realtime hard rtprio 99
+   @realtime hard priority 99
+   @realtime hard memlock 102400
+   ```
+
+Per ridurre la latenza, dopo ogni riavvio (al posto di `<interfaccia>` metti la scheda di rete collegata al robot, che trovi con `ip link`):
+
+```bash
+echo performance | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
+echo 1 | sudo tee /sys/devices/system/cpu/cpu*/cpuidle/state[23]/disable   # C2 e C3
+sudo ethtool -C <interfaccia> rx-usecs 0
+```
+
+I nomi degli stati di sleep della CPU sono in `/sys/devices/system/cpu/cpu0/cpuidle/state*/name`: su un'altra CPU C2 e C3 possono avere numeri diversi.
+
+Da valutare: gli interrupt della scheda di rete sulla stessa CPU del loop (`rt_cpu`), una scheda di rete dedicata al robot. Se Configure o il robot danno errori di comunicazione, segui il [troubleshooting di Franka](https://frankarobotics.github.io/docs/troubleshooting.html).
+
+## Collegare il robot
+
+1. Collega il PC alla porta LAN del **Control**, non a quella nella base del braccio. Meglio un cavo diretto, senza switch.
+2. Dai alla scheda di rete del PC un indirizzo fisso nella stessa rete del robot: se il robot è `172.16.0.2`, per esempio, il PC può essere `172.16.0.1` con maschera `255.255.255.0` (impostazioni di rete di Ubuntu → connessione cablata → IPv4 manuale).
+3. Apri Desk nel browser, all'indirizzo `https://<ip-del-robot>`. Sblocca i freni e attiva FCI dal menu in alto (**Activate FCI**).
+4. Controlla la connessione:
+   ```bash
+   ping -c 3 <ip-del-robot>
+   ~/libfranka/build/examples/echo_robot_state <ip-del-robot>   # stampa lo stato del robot
+   sudo ping <ip-del-robot> -i 0.001 -D -c 10000 -s 1200         # qualità della rete
+   ```
+   Nell'ultimo test i tempi di andata e ritorno devono restare ben sotto 1 ms, che è la durata di un ciclo.
+5. Nella GUI scrivi l'indirizzo in **Robot IP**; lanciando un bridge a mano, usa `-p robot_ip:=<ip-del-robot>`. Il default, `10.224.20.198`, è quello del robot per cui il driver è stato scritto.
 
 ## Avvio rapido
 
-1. Sblocca il robot dal Desk e tieni lo user stop in mano.
+1. Prepara il robot come in [Collegare il robot](#collegare-il-robot): freni sbloccati e FCI attivo. Tieni lo user stop in mano.
 2. Avvia la GUI:
    ```bash
    source ~/uclv_panda_ros2/install/setup.bash
    ros2 launch panda_utils gui.launch.py
    ```
 3. In basso a sinistra scegli il bridge, per esempio **Joint Position**.
-4. Controlla i parametri: almeno **Robot IP** e **Mode**.
+4. Controlla i parametri: almeno **Robot IP** (l'indirizzo del tuo robot) e **Mode**.
 5. Premi **START NODE**, poi **Configure**, poi **Activate**. Il robot ora tiene la posizione.
 6. Muovi il robot. In modalità `external`, da un altro terminale:
    ```bash
@@ -284,7 +342,7 @@ Comuni a tutti i bridge:
 
 | Parametro | Default | Significato |
 |---|---|---|
-| `robot_ip` | `10.224.20.198` | indirizzo del robot |
+| `robot_ip` | `10.224.20.198` | indirizzo del robot: metti quello del tuo |
 | `mode` | `external` | `external` (comandi dal topic) o `internal` (goal e preset) |
 | `auto_preset` | vuoto | preset da lanciare all'attivazione (internal) |
 | `publish_freq` | 100 | frequenza (Hz) di stato e status pubblicati |
@@ -341,7 +399,7 @@ Le schermate di questa pagina sono fatte così.
 
 ## Prove sul robot
 
-Tre terminali:
+Una serie di prove per controllare, la prima volta, che tutto funzioni con il tuo robot e il tuo PC. Servono tre terminali:
 
 | Terminale | Comando | A cosa serve |
 |---|---|---|
@@ -387,17 +445,3 @@ colcon test --packages-select uclv_panda_interfaces panda_utils && colcon test-r
 ```
 
 Devono passare tutti: 90 gtest (pipeline, tracker e i cinque bridge su un robot simulato) più i linter `lint_cmake` e `xmllint`.
-
-## PC real-time
-
-Già a posto: kernel PREEMPT_RT, `ulimit -r 99`.
-
-Da rifare dopo ogni riavvio:
-
-```bash
-echo performance | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
-echo 1 | sudo tee /sys/devices/system/cpu/cpu*/cpuidle/state[23]/disable   # C2 e C3
-sudo ethtool -C enp131s0f0 rx-usecs 0
-```
-
-Da valutare: gli interrupt della scheda di rete sulla stessa CPU del loop (`rt_cpu`), una scheda di rete dedicata al robot.
