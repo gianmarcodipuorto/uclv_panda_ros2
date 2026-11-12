@@ -345,7 +345,9 @@ Il risultato ha `success`, la larghezza finale `width` (m) e un `message`, per e
 
 - Un goal nuovo ferma quello in corso, che finisce come `preempted by a newer goal`: premendo Open hand mentre la pinza si chiude, si riapre subito.
 - Il cancel di un goal ferma le dita dove sono.
-- Dopo un CLOSE la pinza continua a stringere. Chiudere il bridge non la apre.
+- Dopo un CLOSE su un oggetto la pinza continua a tenerlo, anche quando il bridge si chiude. Dopo un CLOSE a vuoto smette di stringere: le dita restano chiuse senza premere l'una sull'altra.
+- Appoggiate al finecorsa esterno (tutte aperte, come dopo un homing) le dita possono incastrarsi, e una presa da sola non le stacca: CLOSE prima le sposta di 2 mm con un movimento in posizione.
+- Se le dita dovevano muoversi di più di 1 mm e non l'hanno fatto, il comando fallisce con `the fingers did not move: try again, or run a homing (command 3)`.
 - Se la larghezza massima non è nota (pinza mai calibrata), OPEN, CLOSE e MOVE vengono rifiutati: fai un HOMING.
 - L'apertura è pubblicata su `/panda/gripper_state` (`sensor_msgs/JointState`, `fer_finger_joint1` e `fer_finger_joint2`, metà dell'apertura ciascuno), fino a 50 volte al secondo.
 - Senza pinza, il Configure stampa un avviso e il bridge funziona senza `/panda/gripper`; con `use_gripper` a false non ci prova nemmeno.
@@ -497,6 +499,7 @@ Tieni sempre lo user stop in mano. Per le prove internal imposta `mode internal`
 | 23 | uno qualsiasi | | un oggetto tra le dita, poi Close hand | `holding an object … mm wide`, con la larghezza dell'oggetto; la pinza lo tiene fino a Open hand |
 | 24 | Joint Position | external | Close hand e Open hand durante `simple_joints_traj` | lo stream continua senza disturbi: `stalls` 0, success rate vicino a 1 |
 | 25 | uno qualsiasi | | `ros2 action send_goal /panda/gripper uclv_panda_interfaces/action/Gripper "{command: 3}"` | homing: le dita si chiudono e si aprono, il risultato dà la larghezza massima |
+| 26 | uno qualsiasi | | subito dopo la prova 25, Close hand | le dita si chiudono: CLOSE prima le stacca dal finecorsa esterno |
 
 Durante ogni prova, in `/panda/bridge_status`: `control_command_success_rate` vicino a 1, `last_error` vuoto (salvo la prova 20), `missed_cycles` che cresce poco, `stalls` a 0 quando uno stream finisce da solo.
 
@@ -509,4 +512,4 @@ cd ~/uclv_panda_ros2
 colcon test --packages-select uclv_panda_interfaces panda_utils && colcon test-result --verbose
 ```
 
-Devono passare tutti: 97 gtest (pipeline, tracker e i cinque bridge, con la Franka Hand, su un robot simulato) più i linter `lint_cmake` e `xmllint`.
+Devono passare tutti: 102 gtest (pipeline, tracker e i cinque bridge, con la Franka Hand, su un robot simulato) più i linter `lint_cmake` e `xmllint`.

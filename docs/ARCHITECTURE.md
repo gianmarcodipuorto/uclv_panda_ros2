@@ -73,11 +73,13 @@ If Ruckig finds no profile that reaches the target acceleration (this happens wh
 
 - The gripper commands of libfranka block until the fingers stop. They run in a worker thread, one at a time; the executor thread of the gripper callback group only accepts the goals.
 - `franka::Gripper::stop()` called from another thread makes the running command throw "Command aborted". A new goal and a cancel use it: the new goal waits as pending, the old one ends as aborted (preempted) or canceled.
-- CLOSE without a width is `grasp(0, speed, force, 0.005, 1.0)`: any final opening counts as a grasp, so it succeeds both on an object and on nothing; the message tells the two apart (an opening below 2 mm means nothing).
+- CLOSE without a width is `grasp(0, speed, force, 0.005, 1.0)`: any final opening counts as a grasp, so it succeeds both on an object and on nothing; the message tells the two apart (an opening below 2 mm means nothing). With nothing, `stop()` then releases the force: the fingers stay closed without pressing on each other.
+- On a real hand, fingers resting on the outer end stop sometimes did not start: the grasp, force limited, stalled at once and the hand reported a grasp at the same opening. So CLOSE from within 1 mm of the maximum width first moves the fingers 2 mm with a position move, which does start them.
+- A command that should move the fingers by more than 1 mm and moves them by less fails, whatever the hand reports. A failed command is logged as a warning; a canceled or preempted one is not.
 - The result reads the opening from a state update that arrived after the command ended, so it is the final one.
 - Goal handles change state only under one mutex, also taken by the state thread when it publishes the feedback: the feedback never goes to a goal that just ended.
 - On Cleanup a running command is stopped; a finished grasp is not released.
-- `FakeGripperBackend` simulates the hand for `fake_robot`: fingers moving at the commanded speed, and an optional object between them (`fake_gripper_object_width`).
+- `FakeGripperBackend` simulates the hand for `fake_robot`: fingers moving at the commanded speed, and an optional object between them (`fake_gripper_object_width`); in the tests also fingers that stick (`Jam`).
 
 ## Signals and shutdown
 
@@ -180,6 +182,7 @@ The headers are in `include/panda_utils/bridge/`, the sources in `src/bridge/`.
 | `test_joint_torque_pipeline.cpp` | with a simulated robot: hold, streams with limits and derivative, damping, impedance, gravity compensation |
 | `test_cartesian_pipeline.cpp` | pose streams (including with the quaternion sign flipped, and staircase ones) and twist streams, stalls, jumps, minimum height, goals, circle |
 | `test_bridges.cpp` | the five complete bridges on the simulated robot: activate/deactivate cycles, streams, goals and presets; the Franka Hand in every bridge and mode: open, close, grasp, preemption, cancel, invalid goals |
+| `test_gripper_server.cpp` | the Franka Hand server on the simulated hand, with fingers that stick: freed from the end stop, commands that do not move them fail, force released after a close on nothing |
 
 The tests run on an isolated ROS domain (215-232, localhost only), so they never reach a bridge connected to the robot.
 

@@ -73,11 +73,13 @@ Se Ruckig non trova un profilo che arrivi all'accelerazione obiettivo (succede q
 
 - In libfranka i comandi della pinza bloccano finché le dita si fermano. Girano in un thread worker, uno alla volta; il thread dell'executor del gruppo della pinza accetta solo i goal.
 - `franka::Gripper::stop()` chiamato da un altro thread fa lanciare "Command aborted" al comando in corso. Lo usano il goal nuovo e il cancel: il goal nuovo aspetta in coda, quello vecchio finisce abortito (preempted) o cancellato.
-- CLOSE senza larghezza è `grasp(0, speed, force, 0.005, 1.0)`: qualsiasi apertura finale vale come presa, quindi riesce sia su un oggetto sia a vuoto; il messaggio distingue i due casi (un'apertura sotto 2 mm vuol dire niente).
+- CLOSE senza larghezza è `grasp(0, speed, force, 0.005, 1.0)`: qualsiasi apertura finale vale come presa, quindi riesce sia su un oggetto sia a vuoto; il messaggio distingue i due casi (un'apertura sotto 2 mm vuol dire niente). A vuoto, poi, `stop()` toglie la forza: le dita restano chiuse senza premere l'una sull'altra.
+- Su una pinza vera, le dita appoggiate al finecorsa esterno a volte non partivano: la presa, a forza limitata, si bloccava subito e la pinza dichiarava una presa alla stessa apertura. Per questo CLOSE, a meno di 1 mm dalla larghezza massima, prima sposta le dita di 2 mm con un movimento in posizione, che invece le fa partire.
+- Un comando che doveva muovere le dita di più di 1 mm e le muove di meno fallisce, qualunque cosa dica la pinza. Un comando fallito va nel log come avviso; uno cancellato o sostituito no.
 - Il risultato legge l'apertura da un aggiornamento di stato arrivato dopo la fine del comando, quindi è quella finale.
 - Gli handle dei goal cambiano stato solo sotto un mutex, preso anche dal thread dello stato quando pubblica il feedback: il feedback non va mai a un goal appena finito.
 - Al Cleanup un comando in corso viene fermato; una presa già fatta non viene rilasciata.
-- `FakeGripperBackend` simula la pinza per `fake_robot`: dita che si muovono alla velocità comandata, e un oggetto facoltativo tra di esse (`fake_gripper_object_width`).
+- `FakeGripperBackend` simula la pinza per `fake_robot`: dita che si muovono alla velocità comandata, e un oggetto facoltativo tra di esse (`fake_gripper_object_width`); nei test anche dita che si incastrano (`Jam`).
 
 ## Segnali e chiusura
 
@@ -180,6 +182,7 @@ Gli header sono in `include/panda_utils/bridge/`, i sorgenti in `src/bridge/`.
 | `test_joint_torque_pipeline.cpp` | con un robot simulato: hold, stream con limiti e derivata, smorzamento, impedenza, gravity compensation |
 | `test_cartesian_pipeline.cpp` | stream di pose (anche con il segno del quaternione invertito, e a gradini) e di twist, stalli, salti, quota minima, goal, cerchio |
 | `test_bridges.cpp` | i cinque bridge completi sul robot simulato: cicli activate/deactivate, stream, goal e preset; la Franka Hand in ogni bridge e modalità: apertura, chiusura, presa, preemption, cancel, goal non validi |
+| `test_gripper_server.cpp` | il server della Franka Hand sulla pinza simulata, con dita che si incastrano: staccate dal finecorsa, comandi che non le muovono falliti, forza tolta dopo una chiusura a vuoto |
 
 I test girano su un dominio ROS isolato (215-232, solo localhost), quindi non raggiungono mai un bridge collegato al robot.
 

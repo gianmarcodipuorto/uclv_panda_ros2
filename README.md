@@ -345,7 +345,9 @@ The result has `success`, the final `width` (m) and a `message`, for example `ho
 
 - A new goal stops the running one, which ends as `preempted by a newer goal`: pressing Open hand while the hand closes opens it at once.
 - Canceling a goal stops the fingers where they are.
-- After a CLOSE the hand keeps holding. Closing the bridge does not open it.
+- After a CLOSE on an object the hand keeps holding it, also when the bridge closes. After a CLOSE on nothing it stops squeezing: the fingers stay closed without pressing on each other.
+- Resting on the outer end stop (fully open, as after a homing) the fingers may stick, and a grasp alone does not free them: CLOSE first moves them 2 mm with a position move.
+- If the fingers should move by more than 1 mm and do not, the command fails with `the fingers did not move: try again, or run a homing (command 3)`.
 - If the maximum width is unknown (a hand never calibrated), OPEN, CLOSE and MOVE are rejected: run a HOMING.
 - The opening is published on `/panda/gripper_state` (`sensor_msgs/JointState`, `fer_finger_joint1` and `fer_finger_joint2`, half of the opening each), up to 50 times per second.
 - Without a hand, Configure prints a warning and the bridge works without `/panda/gripper`; with `use_gripper` set to false it does not even try.
@@ -497,6 +499,7 @@ Always keep the user stop in your hand. For the internal tests, set `mode intern
 | 23 | any | | an object between the fingers, then Close hand | `holding an object … mm wide`, with the width of the object; the hand holds it until Open hand |
 | 24 | Joint Position | external | Close hand and Open hand during `simple_joints_traj` | the stream goes on undisturbed: `stalls` 0, success rate close to 1 |
 | 25 | any | | `ros2 action send_goal /panda/gripper uclv_panda_interfaces/action/Gripper "{command: 3}"` | homing: the fingers close and open, the result gives the maximum width |
+| 26 | any | | right after test 25, Close hand | the fingers close: CLOSE first frees them from the outer end stop |
 
 During each test, in `/panda/bridge_status`: `control_command_success_rate` close to 1, `last_error` empty (except in test 20), `missed_cycles` growing slowly, `stalls` at 0 when a stream ends by itself.
 
@@ -509,4 +512,4 @@ cd ~/uclv_panda_ros2
 colcon test --packages-select uclv_panda_interfaces panda_utils && colcon test-result --verbose
 ```
 
-They must all pass: 97 gtests (pipeline, trackers, and the five bridges with the Franka Hand on a simulated robot) plus the `lint_cmake` and `xmllint` linters.
+They must all pass: 102 gtests (pipeline, trackers, and the five bridges with the Franka Hand on a simulated robot) plus the `lint_cmake` and `xmllint` linters.
