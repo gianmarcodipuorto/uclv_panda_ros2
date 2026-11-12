@@ -225,7 +225,7 @@ ros2 run panda_utils simple_cartesian_traj 0.4 0 0.4 1 0 0 0 5   # posa: fino al
 ros2 run panda_utils simple_cartesian_traj 0.05 0 0 5 --velocity # lo stesso moto, come twist
 ```
 
-Con `simple_velocity_traj` passa sempre 7 posizioni vicine a quelle attuale: senza argomenti va a una configurazione fissa lontana. La posa attuale si legge con `ros2 topic echo --once /pose_state_read_ee`, nello stesso formato che vuole `simple_cartesian_traj`.
+Con `simple_velocity_traj` passa sempre 7 posizioni vicine a quelle attuali: senza argomenti va a una configurazione fissa lontana. La posa attuale si legge con `ros2 topic echo --once /pose_state_read_ee`, nello stesso formato che vuole `simple_cartesian_traj`.
 
 ## Moti interni: goal e preset
 
