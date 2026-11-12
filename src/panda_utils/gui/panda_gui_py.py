@@ -68,6 +68,7 @@ class RosLink:
         self.gripper_width = None
         self.gripper_time = 0.0
         self.gripper_message = ''
+        self.gripper_goal = None  # Handle of the running gripper goal, for Stop
 
         node.create_subscription(BridgeStatus, '/panda/bridge_status', self._on_status, 10)
         node.create_subscription(PandaRobotState, '/panda/robot_state', self._on_robot_state, 10)
@@ -97,6 +98,7 @@ class RosLink:
             self.time_left = None
             self.gripper_width = None
             self.gripper_message = ''
+            self.gripper_goal = None
 
     def snapshot(self):
         with self.lock:
@@ -171,14 +173,27 @@ class RosLink:
 
     # --- Franka Hand ---
 
-    def send_gripper(self, command, label):
+    def send_gripper(self, command, label, width=0.0, speed=0.0, force=0.0):
+        """A goal of /panda/gripper: width in m, speed in m/s, force in N; 0 = default of the bridge"""
         if not self.gripper_goals.server_is_ready():
             self.post('log', (f'Franka Hand {label}: action server not available (is a hand connected?)', 'yellow'))
             return
         goal = Gripper.Goal()
         goal.command = command
+        goal.width = float(width)
+        goal.speed = float(speed)
+        goal.force = float(force)
         future = self.gripper_goals.send_goal_async(goal)
         future.add_done_callback(lambda f: self._on_gripper_response(label, f))
+
+    def cancel_gripper(self):
+        """Stops the running gripper command: the fingers stop where they are"""
+        with self.lock:
+            handle = self.gripper_goal
+        if handle is None:
+            self.post('log', ('Franka Hand: no command running', None))
+            return
+        handle.cancel_goal_async()
 
     def _on_gripper_response(self, label, future):
         try:
@@ -189,9 +204,11 @@ class RosLink:
         if not handle.accepted:
             self.post('log', (f'Franka Hand {label} rejected: the bridge log says why', 'yellow'))
             return
-        handle.get_result_async().add_done_callback(lambda f: self._on_gripper_result(label, f))
+        with self.lock:
+            self.gripper_goal = handle
+        handle.get_result_async().add_done_callback(lambda f: self._on_gripper_result(label, handle, f))
 
-    def _on_gripper_result(self, label, future):
+    def _on_gripper_result(self, label, handle, future):
         try:
             response = future.result()
             message = response.result.message
@@ -200,6 +217,8 @@ class RosLink:
             message, ok = f'failed: {e}', False
         with self.lock:
             self.gripper_message = message
+            if self.gripper_goal is handle:
+                self.gripper_goal = None
         self.post('log', (f'Franka Hand {label}: {message}', None if ok else 'yellow'))
 
     # --- services ---
@@ -348,6 +367,10 @@ class PandaGui:
         self.goal_time = tk.StringVar(value="5.0")
         self.elbow_var = tk.StringVar()
         self.time_left_var = tk.StringVar()
+        # Franka Hand bar: empty fields take the defaults of the bridge
+        self.gripper_width_var = tk.StringVar()
+        self.gripper_speed_var = tk.StringVar()
+        self.gripper_force_var = tk.StringVar()
 
         # Controller selection
         self.controller_var = tk.StringVar(value="joint_velocity")  # default
@@ -929,23 +952,6 @@ class PandaGui:
                 row=first + offset, column=1, columnspan=5, sticky='ew')
             self.status_vars[key] = var
         frame.columnconfigure(5, weight=1)  # A wider window shows more of the long fields
-        # Franka Hand: in every bridge and mode, from Configure on
-        self.gripper_open_btn = tk.Button(
-            frame, text="Open hand",
-            command=lambda: self.ros.send_gripper(Gripper.Goal.OPEN, 'open'),
-            bg="#607D8B", fg="white",
-            font=("Arial", 10, "bold"),
-            relief=tk.RAISED, bd=3
-        )
-        self.gripper_open_btn.grid(row=0, column=6, rowspan=2, sticky='nsew', padx=(10, 0))
-        self.gripper_close_btn = tk.Button(
-            frame, text="Close hand",
-            command=lambda: self.ros.send_gripper(Gripper.Goal.CLOSE, 'close'),
-            bg="#607D8B", fg="white",
-            font=("Arial", 10, "bold"),
-            relief=tk.RAISED, bd=3
-        )
-        self.gripper_close_btn.grid(row=2, column=6, rowspan=2, sticky='nsew', padx=(10, 0), pady=(4, 4))
         self.recover_btn = tk.Button(
             frame, text="Recover",
             command=self.on_recover,
@@ -1068,11 +1074,16 @@ class PandaGui:
             self.elbow_entry.config(state='normal' if cartesian else 'disabled')
 
     def setup_output(self, parent):
-        # As high as the parameters and the controller selection together
-        self.output_frame = ttk.LabelFrame(parent, text="Output Console", padding=10, style="Custom.TLabelframe")
-        self.output_frame.grid(row=2, column=1, rowspan=2, sticky='nsew', padx=(10, 0))
+        # Console and Franka Hand bar, together as high as the parameters and the controller selection
+        column = ttk.Frame(parent, style="Custom.TFrame")
+        column.grid(row=2, column=1, rowspan=2, sticky='nsew', padx=(10, 0))
+        column.rowconfigure(0, weight=1)
+        column.columnconfigure(0, weight=1)
+        self.output_frame = ttk.LabelFrame(column, text="Output Console", padding=10, style="Custom.TLabelframe")
+        self.output_frame.grid(row=0, column=0, sticky='nsew')
         self.output_frame.rowconfigure(0, weight=1)
         self.output_frame.columnconfigure(0, weight=1)
+        self.setup_gripper(column)
 
         # Small requested size: the console takes the space that the grid gives it
         self.output_text = scrolledtext.ScrolledText(
@@ -1085,6 +1096,54 @@ class PandaGui:
         self.output_text.tag_configure('yellow', foreground='#e5e510')
         self.output_text.tag_configure('green', foreground='#23d18b')
         self.output_text.tag_configure('time', foreground='#808080')
+
+    def setup_gripper(self, parent):
+        """Franka Hand: every command of /panda/gripper, in every bridge and mode, from Configure on"""
+        self.gripper_frame = ttk.LabelFrame(parent, text="Franka Hand", padding=(10, 6), style="Custom.TLabelframe")
+        self.gripper_frame.grid(row=1, column=0, sticky='ew', pady=(8, 0))
+        fields = ttk.Frame(self.gripper_frame, style="Custom.TFrame")
+        fields.grid(row=0, column=0, columnspan=5, sticky='w', pady=(0, 6))
+        for column, (label, var) in enumerate((("Width mm (Move)", self.gripper_width_var),
+                                               ("Speed mm/s", self.gripper_speed_var),
+                                               ("Force N (Close, max 70)", self.gripper_force_var))):
+            ttk.Label(fields, text=label, font=("Arial", 9, "bold"), style="Custom.TLabel").grid(
+                row=0, column=2 * column, sticky='w', padx=(0 if column == 0 else 18, 4))
+            ttk.Entry(fields, textvariable=var, width=7, style="Custom.TEntry").grid(row=0, column=2 * column + 1)
+        ttk.Label(fields, text="empty = default of the bridge", style="Custom.TLabel", foreground="#5c5b56").grid(
+            row=0, column=6, sticky='w', padx=(18, 0))
+        button_style = dict(fg="white", font=("Arial", 10, "bold"), relief=tk.RAISED, bd=2)
+        self.gripper_buttons = []
+        for column, (text, command, color) in enumerate((
+                ("Open", lambda: self.on_gripper(Gripper.Goal.OPEN, 'open'), "#607D8B"),
+                ("Close", lambda: self.on_gripper(Gripper.Goal.CLOSE, 'close'), "#607D8B"),
+                ("Move", lambda: self.on_gripper(Gripper.Goal.MOVE, 'move'), "#607D8B"),
+                ("Homing", lambda: self.on_gripper(Gripper.Goal.HOMING, 'homing'), "#607D8B"),
+                ("Stop", self.ros.cancel_gripper, "#d32f2f"))):
+            button = tk.Button(self.gripper_frame, text=text, command=command, bg=color, **button_style)
+            button.grid(row=1, column=column, sticky='ew', padx=(0 if column == 0 else 6, 0))
+            self.gripper_frame.columnconfigure(column, weight=1, uniform="gripper")
+            self.gripper_buttons.append(button)
+
+    def on_gripper(self, command, label):
+        """Sends a gripper command with the values of the Franka Hand bar (mm, mm/s, N)"""
+        values = {}
+        for key, var, name in (('width', self.gripper_width_var, 'Width'), ('speed', self.gripper_speed_var, 'Speed'),
+                               ('force', self.gripper_force_var, 'Force')):
+            text = var.get().strip()
+            try:
+                values[key] = float(text) if text else 0.0
+            except ValueError:
+                self.log(f"Franka Hand {label}: {name} must be a number, got '{text}'", 'yellow')
+                return
+            if values[key] < 0.0:
+                self.log(f"Franka Hand {label}: {name} must not be negative", 'yellow')
+                return
+        if command == Gripper.Goal.MOVE and not self.gripper_width_var.get().strip():
+            self.log("Franka Hand move: set the width first", 'yellow')
+            return
+        self.ros.send_gripper(command, label, width=values['width'] * 1e-3 if command == Gripper.Goal.MOVE else 0.0,
+                              speed=values['speed'] * 1e-3,
+                              force=values['force'] if command == Gripper.Goal.CLOSE else 0.0)
 
     def setup_bindings(self):
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
@@ -1471,7 +1530,7 @@ class PandaGui:
             v['gripper'].set(f"{width * 1e3:.1f} mm" + (f" | {gripper_message}" if gripper_message else ""))
         else:
             v['gripper'].set("not connected" if running and lifecycle in ('inactive', 'active') else "-")
-        for button in (self.gripper_open_btn, self.gripper_close_btn):
+        for button in self.gripper_buttons:
             button.config(state=tk.NORMAL if gripper else tk.DISABLED)
 
         # Internal motions: active bridge in internal mode
