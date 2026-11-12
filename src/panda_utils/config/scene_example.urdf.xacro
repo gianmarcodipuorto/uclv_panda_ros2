@@ -1,0 +1,39 @@
+<?xml version="1.0"?>
+<!-- Example of the rest of the cell, drawn in RViz with the robot. Copy this file, change it and choose
+     it in the RViz window of the GUI (or: ros2 launch panda_utils rviz.launch.py scene:=/path/to/it).
+
+     The root link must be fer_link0, the base of the robot: every object hangs from it with a fixed
+     joint, at a position (m) and orientation (rad, roll pitch yaw) in the base frame. The objects also
+     become TF frames, with the name of their link.
+
+     Shapes: box size="x y z", cylinder radius="r" length="l", sphere radius="r", or a mesh:
+       <mesh filename="file:///absolute/path/part.stl" scale="0.001 0.001 0.001"/>  (STL in mm)
+       <mesh filename="package://my_package/meshes/part.dae"/>
+-->
+<robot name="cell" xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <link name="fer_link0"/>
+
+  <!-- A box hanging from the base of the robot -->
+  <xacro:macro name="box" params="name size xyz rpy:='0 0 0' rgba:='0.6 0.6 0.6 1'">
+    <link name="${name}">
+      <visual>
+        <geometry>
+          <box size="${size}"/>
+        </geometry>
+        <material name="${name}_color">
+          <color rgba="${rgba}"/>
+        </material>
+      </visual>
+    </link>
+    <joint name="${name}_joint" type="fixed">
+      <parent link="fer_link0"/>
+      <child link="${name}"/>
+      <origin xyz="${xyz}" rpy="${rpy}"/>
+    </joint>
+  </xacro:macro>
+
+  <!-- The table the robot stands on: its top surface at z = 0 -->
+  <xacro:box name="table" size="1.2 0.8 0.04" xyz="0.3 0 -0.02" rgba="0.55 0.45 0.35 1"/>
+  <!-- A part on the table, 5 cm wide -->
+  <xacro:box name="part" size="0.05 0.05 0.05" xyz="0.5 0.15 0.025" rgba="0.16 0.47 0.84 1"/>
+</robot>

@@ -4,3 +4,5 @@ log
 .cache
 bags
 .vscode
+# Cloned separately (see the README): not part of this repository
+src/franka_description/
