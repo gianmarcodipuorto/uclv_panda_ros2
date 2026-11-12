@@ -21,6 +21,9 @@ std::string robot_mode_name(franka::RobotMode mode);
 // Positions, velocities and measured torques; the caller sets header and names.
 void fill_joint_state(const franka::RobotState &state, sensor_msgs::msg::JointState &msg);
 void fill_robot_state(const franka::RobotState &state, uclv_panda_interfaces::msg::PandaRobotState &msg);
+// Jacobian of the end effector, mass matrix, Coriolis and gravity torques at the state; sets has_model.
+void fill_model(const franka::Model &model, const franka::RobotState &state,
+                uclv_panda_interfaces::msg::PandaRobotState &msg);
 
 // Tables of the state at connection: joint positions, flange and end effector poses and, with
 // details, Jacobian, mass matrix, Coriolis vector and Jacobian pseudo-inverse. Without a model

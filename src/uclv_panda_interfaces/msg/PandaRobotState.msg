@@ -20,3 +20,15 @@ string robot_mode
 string[] current_errors
 string[] last_motion_errors
 float64 robot_time
+
+# Dynamic model at this state (franka::Model). has_model is false without a model (simulated robot):
+# the arrays below are then zero.
+bool has_model
+# Zero Jacobian of the end effector, column-major 6x7: base frame twist (v, w) = jacobian * dq
+float64[42] jacobian
+# Column-major 7x7 mass matrix
+float64[49] mass
+# Coriolis torques C(q, dq) * dq [Nm]
+float64[7] coriolis
+# Gravity torques, with the load set on the robot [Nm]
+float64[7] gravity

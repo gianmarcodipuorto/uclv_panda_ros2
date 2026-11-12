@@ -70,6 +70,15 @@ void fill_robot_state(const franka::RobotState &state, uclv_panda_interfaces::ms
   msg.robot_time = state.time.toSec();
 }
 
+void fill_model(const franka::Model &model, const franka::RobotState &state,
+                uclv_panda_interfaces::msg::PandaRobotState &msg) {
+  msg.has_model = true;
+  msg.jacobian = model.zeroJacobian(franka::Frame::kEndEffector, state);
+  msg.mass = model.mass(state);
+  msg.coriolis = model.coriolis(state);
+  msg.gravity = model.gravity(state);
+}
+
 namespace {
 
 void print_pose_box(const rclcpp::Logger &logger, const char *title, const std::array<double, 16> &transform) {

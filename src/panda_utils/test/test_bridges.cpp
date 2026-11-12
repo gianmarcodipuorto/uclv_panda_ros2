@@ -10,6 +10,7 @@
 #include <string>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <thread>
 
 #include <lifecycle_msgs/msg/state.hpp>
@@ -82,6 +83,7 @@ class BridgeTest : public ::testing::Test {
           std::lock_guard<std::mutex> lock(mutex);
           q = msg->q;
           ee = msg->o_t_ee;
+          has_model = msg->has_model;
         });
     executor = std::make_unique<rclcpp::executors::MultiThreadedExecutor>(rclcpp::ExecutorOptions(), 6);
     executor->add_node(bridge->get_node_base_interface());
@@ -297,6 +299,7 @@ class BridgeTest : public ::testing::Test {
   uclv_panda_interfaces::msg::BridgeStatus status;
   std::array<double, 7> q{};
   std::array<double, 16> ee{};
+  std::optional<bool> has_model;
 };
 
 }  // namespace
@@ -322,6 +325,9 @@ TEST_F(BridgeTest, PositionsFollowStreamAndStopWhenItStalls) {
     std::lock_guard<std::mutex> lock(mutex);
     EXPECT_EQ(status.stalls, 1u);
     EXPECT_EQ(status.mode, "external");
+    // The simulated robot has no dynamic model
+    ASSERT_TRUE(has_model.has_value());
+    EXPECT_FALSE(*has_model);
   }
   shut_down();
 }

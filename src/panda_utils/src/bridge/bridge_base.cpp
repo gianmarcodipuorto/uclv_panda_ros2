@@ -536,6 +536,11 @@ void BridgeBase::publish_once() {
     robot_state.header.stamp = now;
     robot_state.header.frame_id = params_.base_frame;
     fill_robot_state(state, robot_state);
+    const franka::Model *model = backend_ ? backend_->model() : nullptr;
+    if (model != nullptr) {
+      // In this thread, not in the control loop: a few tens of microseconds per state
+      fill_model(*model, state, robot_state);
+    }
     robot_state_pub_->publish(robot_state);
 
     geometry_msgs::msg::PoseStamped pose;
@@ -543,7 +548,7 @@ void BridgeBase::publish_once() {
     pose.header.frame_id = params_.base_frame;
     pose.pose = geom_utils::get_pose(state.O_T_EE);
     pose_read_pub_->publish(pose);
-    if (const franka::Model *model = backend_ ? backend_->model() : nullptr) {
+    if (model != nullptr) {
       pose.pose = geom_utils::get_pose(model->pose(franka::Frame::kFlange, state));
       pose_computed_pub_->publish(pose);
     }
