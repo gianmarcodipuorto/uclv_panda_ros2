@@ -1,60 +1,60 @@
 <p align="right">
-  <a href="README.md"><img src="https://img.shields.io/badge/Italiano-0969da?style=for-the-badge" alt="Italiano"></a>
-  <a href="README.en.md"><img src="https://img.shields.io/badge/English-8c959f?style=for-the-badge" alt="English"></a>
+  <a href="README.md"><img src="https://img.shields.io/badge/English-0969da?style=for-the-badge" alt="English"></a>
+  <a href="README.it.md"><img src="https://img.shields.io/badge/Italiano-8c959f?style=for-the-badge" alt="Italiano"></a>
 </p>
 
-# uclv_panda_ros2: driver ROS 2 per il Franka Panda
+# uclv_panda_ros2: ROS 2 driver for the Franka Panda
 
-Driver ROS 2 Jazzy per il Franka Panda (FER, System 4.x) con libfranka 0.9.2. Si usa da una GUI, oppure comandando il robot dai propri nodi attraverso dei topic. Per il Franka Research 3 (FR3) usa invece [franka_ros2](https://github.com/frankaemika/franka_ros2).
+ROS 2 Jazzy driver for the Franka Panda (FER, System 4.x) with libfranka 0.9.2. You use it from a GUI, or by commanding the robot from your own nodes through topics. For the Franka Research 3 (FR3) use [franka_ros2](https://github.com/frankaemika/franka_ros2) instead.
 
-![La GUI con il bridge attivo](docs/images/gui_external.png)
+![The GUI with an active bridge](docs/images/gui_external.png)
 
-Il codice precedente a questa versione è nel branch [`old`](https://github.com/gianmarcodipuorto/uclv_panda_ros2/tree/old).
+The code before this version is on the [`old`](https://github.com/gianmarcodipuorto/uclv_panda_ros2/tree/old) branch.
 
-## Indice
+## Contents
 
-1. [Come è fatto](#come-è-fatto)
-2. [Installazione](#installazione)
-3. [PC real-time](#pc-real-time)
-4. [Collegare il robot](#collegare-il-robot)
-5. [Avvio rapido](#avvio-rapido)
-6. [La GUI](#la-gui)
-7. [Comandare il robot da un proprio programma](#comandare-il-robot-da-un-proprio-programma)
-8. [Moti interni: goal e preset](#moti-interni-goal-e-preset)
-9. [Stato, errori e ripresa](#stato-errori-e-ripresa)
-10. [Parametri](#parametri)
-11. [Provare senza robot](#provare-senza-robot)
-12. [Prove sul robot](#prove-sul-robot)
-13. [Test automatici](#test-automatici)
+1. [How it works](#how-it-works)
+2. [Installation](#installation)
+3. [Real-time PC](#real-time-pc)
+4. [Connecting the robot](#connecting-the-robot)
+5. [Quick start](#quick-start)
+6. [The GUI](#the-gui)
+7. [Commanding the robot from your own program](#commanding-the-robot-from-your-own-program)
+8. [Internal motions: goals and presets](#internal-motions-goals-and-presets)
+9. [State, errors and recovery](#state-errors-and-recovery)
+10. [Parameters](#parameters)
+11. [Trying it without a robot](#trying-it-without-a-robot)
+12. [Robot tests](#robot-tests)
+13. [Automated tests](#automated-tests)
 
-## Come è fatto
+## How it works
 
-Per ogni modo di comandare il robot c'è un nodo, chiamato **bridge**, che si collega al robot con libfranka. Si usa un bridge alla volta, di solito avviato dalla GUI.
+For each way of commanding the robot there is a node, called a **bridge**, that connects to the robot through libfranka. You use one bridge at a time, usually started from the GUI.
 
-| Nella GUI | Eseguibile | Comanda | Topic dei comandi |
+| In the GUI | Executable | Commands | Command topic |
 |---|---|---|---|
-| Joint Position | `panda_joint_positions_bridge` | posizioni dei giunti | `/panda/joint_position_command` |
-| Joint Velocity | `panda_joint_velocities_bridge` | velocità dei giunti | `/panda/joint_velocity_command` |
-| Joint Torque | `panda_joint_torques_bridge` | coppie dei giunti | `/panda/joint_torque_command` |
-| Cartesian Position | `panda_cartesian_position_bridge` | posa dell'end effector | `/panda/cartesian_position_command` |
-| Cartesian Velocity | `panda_cartesian_velocity_bridge` | velocità dell'end effector | `/panda/cartesian_velocity_command` |
+| Joint Position | `panda_joint_positions_bridge` | joint positions | `/panda/joint_position_command` |
+| Joint Velocity | `panda_joint_velocities_bridge` | joint velocities | `/panda/joint_velocity_command` |
+| Joint Torque | `panda_joint_torques_bridge` | joint torques | `/panda/joint_torque_command` |
+| Cartesian Position | `panda_cartesian_position_bridge` | end-effector pose | `/panda/cartesian_position_command` |
+| Cartesian Velocity | `panda_cartesian_velocity_bridge` | end-effector velocity | `/panda/cartesian_velocity_command` |
 
-Ogni bridge ha due modalità, scelte con il parametro `mode`:
+Each bridge has two modes, chosen with the `mode` parameter:
 
-- **`external`**: il robot segue i comandi pubblicati sul topic da un altro nodo, come con un controller "forward" di ros_control.
-- **`internal`**: il moto lo genera il bridge, verso un goal (azione) o con un moto predefinito (preset).
+- **`external`**: the robot follows the commands that another node publishes on the topic, as with a ros_control "forward" controller.
+- **`internal`**: the bridge generates the motion itself, towards a goal (action) or as a predefined motion (preset).
 
-Il bridge manda un comando al robot ogni millisecondo, sempre: il client non deve farlo. Riproduce i comandi ricevuti secondo il loro timestamp, li adatta ai limiti del robot e, se il client smette di pubblicare, ferma il robot dolcemente.
+The bridge sends a command to the robot every millisecond, always: the client does not have to. It plays back the commands it receives according to their timestamps, adapts them to the robot's limits and, if the client stops publishing, stops the robot smoothly.
 
-Per sapere come funziona dentro, e dove sono i file: [docs/ARCHITETTURA.md](docs/ARCHITETTURA.md).
+How it works inside, and where the files are: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-## Installazione
+## Installation
 
-Servono:
+You need:
 
-- un Panda (FER) con System 4.2.1 o una versione 4.x successiva, con la feature FCI installata (in Desk: Settings → System → Installed Features);
-- un PC con Ubuntu 24.04, [ROS 2 Jazzy](https://docs.ros.org/en/jazzy/Installation/Ubuntu-Install-Debs.html) e un kernel real-time (vedi [PC real-time](#pc-real-time));
-- **libfranka 0.9.2**, l'ultima versione compatibile con il Panda, compilata da sorgente.
+- a Panda (FER) with System 4.2.1 or a later 4.x version, with the FCI feature installed (in Desk: Settings → System → Installed Features);
+- a PC with Ubuntu 24.04, [ROS 2 Jazzy](https://docs.ros.org/en/jazzy/Installation/Ubuntu-Install-Debs.html) and a real-time kernel (see [Real-time PC](#real-time-pc));
+- **libfranka 0.9.2**, the last version compatible with the Panda, built from source.
 
 ```bash
 # 1. libfranka 0.9.2, in ~/libfranka
@@ -64,10 +64,10 @@ cd ~/libfranka && mkdir build && cd build
 cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF ..
 cmake --build . -j4 && sudo cmake --install . && sudo ldconfig
 
-# 2. dipendenze ROS, della GUI e della build
+# 2. ROS, GUI and build dependencies
 sudo apt install -y ros-jazzy-ruckig ros-jazzy-realtime-tools python3-tk qtbase5-dev python3-colcon-common-extensions
 
-# 3. questo repository, in ~/uclv_panda_ros2
+# 3. this repository, in ~/uclv_panda_ros2
 git clone https://github.com/gianmarcodipuorto/uclv_panda_ros2.git ~/uclv_panda_ros2
 cd ~/uclv_panda_ros2
 source /opt/ros/jazzy/setup.bash
@@ -75,28 +75,28 @@ colcon build --packages-select uclv_panda_interfaces panda_utils --cmake-args -D
 source install/setup.bash
 ```
 
-I comandi di questa pagina suppongono il repository in `~/uclv_panda_ros2`: se lo cloni altrove, cambia il percorso. Per non ripetere il `source` in ogni terminale: `echo "source ~/uclv_panda_ros2/install/setup.bash" >> ~/.bashrc`.
+The commands on this page assume the repository is in `~/uclv_panda_ros2`: if you clone it somewhere else, change the path. To avoid repeating the `source` in every terminal: `echo "source ~/uclv_panda_ros2/install/setup.bash" >> ~/.bashrc`.
 
-> Non installare `ros-jazzy-libfranka`: è una versione più recente, solo per l'FR3, e CMake potrebbe usarla al posto della 0.9.2.
+> Do not install `ros-jazzy-libfranka`: it is a newer version, for the FR3 only, and CMake could pick it up instead of 0.9.2.
 
-> Prima di ricompilare chiudi il bridge (Stop Controller nella GUI). colcon non può sovrascrivere un eseguibile in uso, e al robot si collega un solo bridge alla volta. Se la GUI è già chiusa e un bridge è rimasto aperto: `pkill -INT -f lib/panda_utils/panda_`.
+> Close the bridge before rebuilding (Stop Controller in the GUI). colcon cannot overwrite an executable in use, and only one bridge at a time can connect to the robot. If the GUI is already closed and a bridge is still running: `pkill -INT -f lib/panda_utils/panda_`.
 
-## PC real-time
+## Real-time PC
 
-libfranka vuole un kernel real-time e i permessi per usarlo: senza, il Configure del bridge fallisce. Si prepara una volta sola.
+libfranka needs a real-time kernel and the permissions to use it: without them, the bridge fails on Configure. You set this up once.
 
-1. **Kernel PREEMPT_RT.** Su Ubuntu 24.04 il modo più semplice è il kernel real-time di Ubuntu Pro, gratuito per uso personale:
+1. **PREEMPT_RT kernel.** On Ubuntu 24.04 the easiest way is the Ubuntu Pro real-time kernel, free for personal use:
    ```bash
-   sudo pro attach                    # con il token del tuo account Ubuntu Pro
+   sudo pro attach                    # with the token of your Ubuntu Pro account
    sudo pro enable realtime-kernel
    ```
-   In alternativa compilalo seguendo la [guida di Franka](https://frankarobotics.github.io/docs/doc/libfranka/docs/real_time_kernel.html). Dopo il riavvio `uname -v` deve contenere `PREEMPT_RT`.
-2. **Permessi real-time** per il tuo utente:
+   Alternatively, build it following [Franka's guide](https://frankarobotics.github.io/docs/doc/libfranka/docs/real_time_kernel.html). After the reboot, `uname -v` must contain `PREEMPT_RT`.
+2. **Real-time permissions** for your user:
    ```bash
    sudo addgroup realtime
    sudo usermod -a -G realtime $(whoami)
    ```
-   Poi aggiungi queste righe a `/etc/security/limits.conf`, ed esci e rientra dalla sessione. `ulimit -r` deve dare 99.
+   Then add these lines to `/etc/security/limits.conf`, and log out and back in. `ulimit -r` must print 99.
    ```
    @realtime soft rtprio 99
    @realtime soft priority 99
@@ -106,146 +106,146 @@ libfranka vuole un kernel real-time e i permessi per usarlo: senza, il Configure
    @realtime hard memlock 102400
    ```
 
-Per ridurre la latenza, dopo ogni riavvio (al posto di `<interfaccia>` metti la scheda di rete collegata al robot, che trovi con `ip link`):
+To reduce latency, after every reboot (replace `<interface>` with the network card connected to the robot, which you find with `ip link`):
 
 ```bash
 echo performance | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
-echo 1 | sudo tee /sys/devices/system/cpu/cpu*/cpuidle/state[23]/disable   # C2 e C3
-sudo ethtool -C <interfaccia> rx-usecs 0
+echo 1 | sudo tee /sys/devices/system/cpu/cpu*/cpuidle/state[23]/disable   # C2 and C3
+sudo ethtool -C <interface> rx-usecs 0
 ```
 
-I nomi degli stati di sleep della CPU sono in `/sys/devices/system/cpu/cpu0/cpuidle/state*/name`: su un'altra CPU C2 e C3 possono avere numeri diversi.
+The names of the CPU sleep states are in `/sys/devices/system/cpu/cpu0/cpuidle/state*/name`: on another CPU, C2 and C3 may have different numbers.
 
-Da valutare: gli interrupt della scheda di rete sulla stessa CPU del loop (`rt_cpu`), una scheda di rete dedicata al robot. Se Configure o il robot danno errori di comunicazione, segui il [troubleshooting di Franka](https://frankarobotics.github.io/docs/troubleshooting.html).
+Worth considering: the network card interrupts on the same CPU as the loop (`rt_cpu`), and a network card dedicated to the robot. If Configure or the robot report communication errors, follow [Franka's troubleshooting](https://frankarobotics.github.io/docs/troubleshooting.html).
 
-## Collegare il robot
+## Connecting the robot
 
-1. Collega il PC alla porta LAN del **Control**, non a quella nella base del braccio. Meglio un cavo diretto, senza switch.
-2. Dai alla scheda di rete del PC un indirizzo fisso nella stessa rete del robot: se il robot è `172.16.0.2`, per esempio, il PC può essere `172.16.0.1` con maschera `255.255.255.0` (impostazioni di rete di Ubuntu → connessione cablata → IPv4 manuale).
-3. Apri Desk nel browser, all'indirizzo `https://<ip-del-robot>`. Sblocca i freni e attiva FCI dal menu in alto (**Activate FCI**).
-4. Controlla la connessione:
+1. Connect the PC to the LAN port of the **Control**, not to the one in the base of the arm. A direct cable, without a switch, is better.
+2. Give the PC network card a static address in the same network as the robot: for example, if the robot is `172.16.0.2`, the PC can be `172.16.0.1` with netmask `255.255.255.0` (Ubuntu network settings → wired connection → manual IPv4).
+3. Open Desk in the browser at `https://<robot-ip>`. Unlock the brakes and activate FCI from the top menu (**Activate FCI**).
+4. Check the connection:
    ```bash
-   ping -c 3 <ip-del-robot>
-   ~/libfranka/build/examples/echo_robot_state <ip-del-robot>   # stampa lo stato del robot
-   sudo ping <ip-del-robot> -i 0.001 -D -c 10000 -s 1200         # qualità della rete
+   ping -c 3 <robot-ip>
+   ~/libfranka/build/examples/echo_robot_state <robot-ip>   # prints the robot state
+   sudo ping <robot-ip> -i 0.001 -D -c 10000 -s 1200         # network quality
    ```
-   Nell'ultimo test i tempi di andata e ritorno devono restare ben sotto 1 ms, che è la durata di un ciclo.
-5. Nella GUI scrivi l'indirizzo in **Robot IP**; lanciando un bridge a mano, usa `-p robot_ip:=<ip-del-robot>`. Il default, `10.224.20.198`, è quello del robot per cui il driver è stato scritto.
+   In the last test the round-trip times must stay well below 1 ms, the length of one cycle.
+5. In the GUI, write the address in **Robot IP**; when you launch a bridge by hand, use `-p robot_ip:=<robot-ip>`. The default, `10.224.20.198`, is the address of the robot the driver was written for.
 
-## Avvio rapido
+## Quick start
 
-1. Prepara il robot come in [Collegare il robot](#collegare-il-robot): freni sbloccati e FCI attivo. Tieni lo user stop in mano.
-2. Avvia la GUI:
+1. Prepare the robot as in [Connecting the robot](#connecting-the-robot): brakes unlocked and FCI active. Keep the user stop in your hand.
+2. Start the GUI:
    ```bash
    source ~/uclv_panda_ros2/install/setup.bash
    ros2 launch panda_utils gui.launch.py
    ```
-3. In basso a sinistra scegli il bridge, per esempio **Joint Position**.
-4. Controlla i parametri: almeno **Robot IP** (l'indirizzo del tuo robot) e **Mode**.
-5. Premi **START NODE**, poi **Configure**, poi **Activate**. Il robot ora tiene la posizione.
-6. Muovi il robot. In modalità `external`, da un altro terminale:
+3. At the bottom left, choose the bridge, for example **Joint Position**.
+4. Check the parameters: at least **Robot IP** (the address of your robot) and **Mode**.
+5. Press **START NODE**, then **Configure**, then **Activate**. The robot now holds its position.
+6. Move the robot. In `external` mode, from another terminal:
    ```bash
    source ~/uclv_panda_ros2/install/setup.bash
-   ros2 run panda_utils simple_joints_traj   # i 7 giunti scendono di 0.2 rad in 2 s
+   ros2 run panda_utils simple_joints_traj   # the 7 joints decrease by 0.2 rad in 2 s
    ```
-   In modalità `internal` si apre la finestra **Internal motions**, da cui lanci un preset o un goal.
-7. Alla fine premi **Stop Controller**, oppure chiudi la finestra: il robot si ferma dolcemente e il bridge esce.
+   In `internal` mode the **Internal motions** window opens, where you start a preset or a goal.
+7. When you are done, press **Stop Controller** or close the window: the robot stops smoothly and the bridge exits.
 
-## La GUI
+## The GUI
 
-![Le parti della GUI](docs/images/gui_parti.png)
+![The parts of the GUI](docs/images/gui_parti.png)
 
-| | Parte | A cosa serve |
+| | Part | What it is for |
 |---|---|---|
-| 1 | **Controller Actions** | avvia il bridge e lo porta attraverso i suoi stati (tabella sotto) |
-| 2 | **Parameters** | parametri del bridge scelto; si bloccano mentre il bridge è in esecuzione |
-| 3 | **Motion controller selection** | quale bridge avviare: giunti sulla prima riga, cartesiani sulla seconda |
-| 4 | **Bridge status** | stato del bridge e del robot, aggiornato 5 volte al secondo; pulsanti **Recover** e **Internal motions** |
-| 5 | **Output Console** | il log della GUI e del bridge: errori in rosso, avvisi in giallo |
+| 1 | **Controller Actions** | starts the bridge and takes it through its states (table below) |
+| 2 | **Parameters** | parameters of the chosen bridge; they are locked while the bridge is running |
+| 3 | **Motion controller selection** | which bridge to start: joint bridges on the first row, Cartesian ones on the second |
+| 4 | **Bridge status** | state of the bridge and of the robot, updated 5 times per second; **Recover** and **Internal motions** buttons |
+| 5 | **Output Console** | the log of the GUI and of the bridge: errors in red, warnings in yellow |
 
-I pulsanti si abilitano solo quando l'azione è possibile:
+The buttons are enabled only when the action is possible:
 
-| Pulsante | Cosa succede |
+| Button | What happens |
 |---|---|
-| START NODE | lancia il bridge scelto, con i parametri della GUI |
-| Configure | connessione al robot e impostazioni (collisioni, impedenze, carico, end effector); nella console compaiono le tabelle dello stato iniziale. Da qui lo stato del robot viene pubblicato |
-| Activate | parte il loop di controllo a 1 kHz; il robot tiene la posizione |
-| Deactivate | fermata dolce, poi il loop si chiude; il robot resta connesso |
-| Stop Controller | Deactivate (se attivo), poi chiude il bridge |
+| START NODE | launches the chosen bridge with the GUI parameters |
+| Configure | connects to the robot and applies the settings (collisions, impedances, load, end effector); the console shows the tables of the initial state. From here on the robot state is published |
+| Activate | starts the 1 kHz control loop; the robot holds its position |
+| Deactivate | smooth stop, then the loop ends; the robot stays connected |
+| Stop Controller | Deactivate (if active), then closes the bridge |
 
-Se un passo fallisce, per esempio Configure con il robot non raggiungibile, compare un errore e la console dice perché.
+If a step fails, for example Configure with the robot unreachable, an error pops up and the console says why.
 
-Chiudere la finestra, o premere Ctrl+C nel terminale del launch, ferma prima il robot e poi chiude GUI e bridge.
+Closing the window, or pressing Ctrl+C in the launch terminal, first stops the robot and then closes the GUI and the bridge.
 
-### Durante un moto
+### During a motion
 
-La schermata in cima alla pagina mostra il bridge Joint Position mentre segue lo stream di `simple_joints_traj`. Nel riquadro **Bridge status** i campi da guardare sono:
+The screenshot at the top of the page shows the Joint Position bridge while it follows the stream of `simple_joints_traj`. In the **Bridge status** panel, the fields to watch are:
 
-- **State**: `holding` (fermo in posizione), `moving`, `stopping`, `error`;
-- **Success rate**: la frazione di comandi arrivati al robot; deve restare vicina a 1;
-- **Commands Hz (max gap)**: la frequenza con cui il client pubblica, e il buco più lungo tra due messaggi;
-- **Stalls**: quante volte lo stream si è interrotto mentre il robot si muoveva, e il bridge l'ha fermato;
-- **Limited cycles**: quante volte il bridge ha dovuto correggere un comando che il robot non avrebbe accettato.
+- **State**: `holding` (holding its position), `moving`, `stopping`, `error`;
+- **Success rate**: the fraction of commands that reached the robot; it should stay close to 1;
+- **Commands Hz (max gap)**: the rate at which the client publishes, and the longest gap between two messages;
+- **Stalls**: how many times the stream broke off while the robot was moving, and the bridge stopped it;
+- **Limited cycles**: how many times the bridge had to correct a command that the robot would not have accepted.
 
-### Modalità internal
+### Internal mode
 
-![La finestra Internal motions](docs/images/gui_internal.png)
+![The Internal motions window](docs/images/gui_internal.png)
 
-Scegliendo **Mode** `internal` si apre la finestra **Internal motions**. Se la chiudi, la riapri con il pulsante **Internal motions** del riquadro di stato. I comandi si abilitano quando il bridge è attivo:
+Choosing **Mode** `internal` opens the **Internal motions** window. If you close it, reopen it with the **Internal motions** button of the status panel. The controls are enabled when the bridge is active:
 
-- **Run preset**: lancia un moto predefinito, con durata e ampiezza (0 = valore di default);
-- **Current** riempie il goal con la posizione (o la posa) attuale: cambia un valore, scegli il tempo e premi **Send goal**;
-- **Elbow rad** (solo cartesiani, con `use_elbow_control`): posizione del gomito da raggiungere, vuoto per tenerlo;
-- **Stop motion** ferma dolcemente il moto in corso.
+- **Run preset**: starts a predefined motion, with duration and amplitude (0 = default value);
+- **Current** fills the goal with the current position (or pose): change a value, choose the time and press **Send goal**;
+- **Elbow rad** (Cartesian bridges only, with `use_elbow_control`): elbow position to reach, empty to keep it;
+- **Stop motion** stops the current motion smoothly.
 
-| Bridge | Preset | Goal |
+| Bridge | Presets | Goal |
 |---|---|---|
-| di giunto | `quintic_joint1` (giunto 1 avanti di 0.2 rad in 10 s), `sine_joint1` (giunto 1 avanti e indietro) | 7 posizioni di giunto |
-| Joint Torque | gli stessi, più `gravity_compensation` (il robot si muove a mano) | 7 posizioni di giunto, inseguite in impedenza |
-| cartesiani | `line_x` (10 cm lungo x e ritorno), `circle_xy` (cerchio di 5 cm nel piano orizzontale) | posa `x,y,z,qx,qy,qz,qw` nel frame base |
+| joint | `quintic_joint1` (joint 1 forward by 0.2 rad in 10 s), `sine_joint1` (joint 1 back and forth) | 7 joint positions |
+| Joint Torque | the same, plus `gravity_compensation` (you move the robot by hand) | 7 joint positions, tracked in impedance |
+| Cartesian | `line_x` (10 cm along x and back), `circle_xy` (5 cm circle in the horizontal plane) | pose `x,y,z,qx,qy,qz,qw` in the base frame |
 
-### Errori e Recover
+### Errors and Recover
 
-![Un errore e il pulsante Recover](docs/images/gui_errore.png)
+![An error and the Recover button](docs/images/gui_errore.png)
 
-Dopo un reflex del robot, lo user stop o un errore del bridge, **State** diventa `error`, la causa compare in **Last error** e in rosso nella console, e si abilita **Recover**. Recover esegue la procedura di ripresa di libfranka e, se il bridge è attivo, il robot torna a tenere la posizione.
+After a robot reflex, the user stop or a bridge error, **State** becomes `error`, the cause appears in **Last error** and in red in the console, and **Recover** is enabled. Recover runs the libfranka recovery procedure and, if the bridge is active, the robot holds its position again.
 
-Nella schermata il bridge si è fermato perché non riceveva comandi da più di 500 ms (parametro **Timeout Commands ms**).
+In the screenshot the bridge stopped because it had received no commands for more than 500 ms (parameter **Timeout Commands ms**).
 
-## Comandare il robot da un proprio programma
+## Commanding the robot from your own program
 
-In modalità `external` il robot segue i messaggi pubblicati sul topic del bridge attivo:
+In `external` mode the robot follows the messages published on the topic of the active bridge:
 
-| Bridge | Topic | Tipo | Contenuto |
+| Bridge | Topic | Type | Content |
 |---|---|---|---|
-| Joint Position | `/panda/joint_position_command` | `uclv_panda_interfaces/JointsCommandedPositions` | `positions`: 7 posizioni (rad) |
-| Joint Velocity | `/panda/joint_velocity_command` | `sensor_msgs/JointState` | `velocity`: 7 velocità (rad/s) |
-| Joint Torque | `/panda/joint_torque_command` | `sensor_msgs/JointState` | `effort`: 7 coppie (Nm), **senza la gravità** |
-| Cartesian Position | `/panda/cartesian_position_command` | `geometry_msgs/PoseStamped` | posa dell'end effector nel frame base |
-| Cartesian Velocity | `/panda/cartesian_velocity_command` | `geometry_msgs/TwistStamped` | velocità dell'end effector nel frame base |
+| Joint Position | `/panda/joint_position_command` | `uclv_panda_interfaces/JointsCommandedPositions` | `positions`: 7 positions (rad) |
+| Joint Velocity | `/panda/joint_velocity_command` | `sensor_msgs/JointState` | `velocity`: 7 velocities (rad/s) |
+| Joint Torque | `/panda/joint_torque_command` | `sensor_msgs/JointState` | `effort`: 7 torques (Nm), **without gravity** |
+| Cartesian Position | `/panda/cartesian_position_command` | `geometry_msgs/PoseStamped` | end-effector pose in the base frame |
+| Cartesian Velocity | `/panda/cartesian_velocity_command` | `geometry_msgs/TwistStamped` | end-effector velocity in the base frame |
 
-### Le regole
+### The rules
 
-1. **Metti in `header.stamp` l'istante a cui si riferisce il campione.** Il bridge riproduce i campioni in quell'ordine e a quei tempi, `playout_delay_ms` dopo lo stamp: così i ritardi della rete non arrivano al robot. Con lo stamp a zero il bridge usa l'ora di arrivo.
-2. **Pubblica alla frequenza che hai.** Non serve 1 kHz: il bridge interpola tra i campioni. Adatta però due parametri:
+1. **Put in `header.stamp` the instant the sample refers to.** The bridge plays the samples back in that order and at those times, `playout_delay_ms` after the stamp: this way network delays do not reach the robot. With a zero stamp the bridge uses the arrival time.
+2. **Publish at the rate you have.** 1 kHz is not needed: the bridge interpolates between the samples. Adjust two parameters, though:
 
-   | Il client pubblica a | Playout delay ms | Stall timeout ms |
+   | The client publishes at | Playout delay ms | Stall timeout ms |
    |---|---|---|
-   | 1 kHz | 5 (default; coppie 1) | 20 (default) |
+   | 1 kHz | 5 (default; torques 1) | 20 (default) |
    | 100 Hz | 15 | 20 (default) |
-   | 40 Hz (ogni 25 ms) | 30 | 50 |
+   | 40 Hz (every 25 ms) | 30 | 50 |
 
-   In generale: `playout_delay_ms` almeno il periodo più 5 ms, `stall_timeout_ms` almeno due periodi. Il prezzo è il ritardo, pari a `playout_delay_ms`.
-3. **Non ripetere lo stesso valore per tenere vivo lo stream.** Il bridge legge gli stamp: 25 campioni uguali seguiti da un salto vogliono dire "fermo, poi scatta", e il robot vibra. Pubblica i campioni nuovi quando li hai.
-4. **Parti dal comando attuale.** Il primo campione deve essere vicino a dove il robot è comandato ora: `q_d` o `o_t_ee_d` in `/panda/robot_state`. Uno stream di posizioni o pose che parte a più di `max_jump` viene rifiutato.
-5. **Quando smetti di pubblicare**, il bridge ferma il robot dolcemente e tiene la posizione. Per le posizioni e le pose resta sull'ultimo punto ricevuto. Per velocità e coppie frena fino a fermarsi, dopo `stall_timeout_ms`: per mantenere una velocità devi continuare a pubblicarla.
-6. **Le coppie sono senza gravità**: la gravità la compensa il robot, come in libfranka.
+   In general: `playout_delay_ms` at least the period plus 5 ms, `stall_timeout_ms` at least two periods. The price is a delay equal to `playout_delay_ms`.
+3. **Do not repeat the same value to keep the stream alive.** The bridge reads the stamps: 25 identical samples followed by a jump mean "stand still, then jump", and the robot vibrates. Publish new samples when you have them.
+4. **Start from the current command.** The first sample must be close to where the robot is commanded now: `q_d` or `o_t_ee_d` in `/panda/robot_state`. A stream of positions or poses that starts more than `max_jump` away is rejected.
+5. **When you stop publishing**, the bridge stops the robot smoothly and holds its position. For positions and poses it stays at the last point received. For velocities and torques it brakes to a stop after `stall_timeout_ms`: to keep a velocity you have to keep publishing it.
+6. **Torques are without gravity**: the robot compensates gravity, as in libfranka.
 
-Pose e twist sono nel frame base (`fer_link0`), con il quaternione nell'ordine x, y, z, w. Il segno del quaternione non conta.
+Poses and twists are in the base frame (`fer_link0`), with the quaternion in x, y, z, w order. The sign of the quaternion does not matter.
 
-### Un esempio in Python
+### A Python example
 
-[`src/panda_utils/examples/joint_position_client.py`](src/panda_utils/examples/joint_position_client.py) sposta il giunto 1 di 0.2 rad in 4 s, pubblicando a 100 Hz:
+[`src/panda_utils/examples/joint_position_client.py`](src/panda_utils/examples/joint_position_client.py) moves joint 1 by 0.2 rad in 4 s, publishing at 100 Hz:
 
 ```python
 def on_state(self, msg):
@@ -267,131 +267,131 @@ def publish(self):
         raise SystemExit  # last sample, at rest: the bridge holds this position
 ```
 
-Per provarlo: avvia **Joint Position** in modalità `external` con **Playout delay ms** = 15, poi
+To try it, start **Joint Position** in `external` mode with **Playout delay ms** = 15, then run
 
 ```bash
 python3 ~/uclv_panda_ros2/src/panda_utils/examples/joint_position_client.py
 ```
 
-Alla fine, nel riquadro di stato, **Stalls** e **Limited cycles** devono essere 0.
+At the end, **Stalls** and **Limited cycles** in the status panel must be 0.
 
-### I client di riferimento
+### The reference clients
 
-Ogni bridge ha un client già pronto, che pubblica a 1 kHz:
+Each bridge has a ready-made client that publishes at 1 kHz:
 
 ```bash
-ros2 run panda_utils simple_joints_traj                          # posizioni: i 7 giunti scendono di 0.2 rad in 2 s
-ros2 run panda_utils simple_velocity_traj q1 q2 q3 q4 q5 q6 q7   # velocità: va alle 7 posizioni date in 5 s
-ros2 run panda_utils simple_torque_cmd 10                        # coppie nulle per 10 s: il robot "galleggia"
-ros2 run panda_utils simple_cartesian_traj 0.05 0 0 5            # posa: 5 cm lungo x in 5 s
-ros2 run panda_utils simple_cartesian_traj 0.4 0 0.4 1 0 0 0 5   # posa: fino alla posa x y z qx qy qz qw in 5 s
-ros2 run panda_utils simple_cartesian_traj 0.05 0 0 5 --velocity # lo stesso moto, come twist
+ros2 run panda_utils simple_joints_traj                          # positions: the 7 joints decrease by 0.2 rad in 2 s
+ros2 run panda_utils simple_velocity_traj q1 q2 q3 q4 q5 q6 q7   # velocities: goes to the 7 given positions in 5 s
+ros2 run panda_utils simple_torque_cmd 10                        # zero torques for 10 s: the robot "floats"
+ros2 run panda_utils simple_cartesian_traj 0.05 0 0 5            # pose: 5 cm along x in 5 s
+ros2 run panda_utils simple_cartesian_traj 0.4 0 0.4 1 0 0 0 5   # pose: to the pose x y z qx qy qz qw in 5 s
+ros2 run panda_utils simple_cartesian_traj 0.05 0 0 5 --velocity # the same motion, as a twist
 ```
 
-Con `simple_velocity_traj` passa sempre 7 posizioni vicine a quelle attuali: senza argomenti va a una configurazione fissa lontana. La posa attuale si legge con `ros2 topic echo --once /pose_state_read_ee`, nello stesso formato che vuole `simple_cartesian_traj`.
+With `simple_velocity_traj`, always pass 7 positions close to the current ones: without arguments it goes to a fixed configuration far away. You can read the current pose with `ros2 topic echo --once /pose_state_read_ee`, in the same format that `simple_cartesian_traj` expects.
 
-## Moti interni: goal e preset
+## Internal motions: goals and presets
 
-Oltre che dalla GUI, i moti `internal` si comandano da riga di comando:
+Besides the GUI, `internal` motions can be commanded from the command line:
 
 ```bash
-# goal di giunto: posizioni e durata
+# joint goal: positions and duration
 ros2 action send_goal --feedback /panda/joint_traj uclv_panda_interfaces/action/JointTraj \
   "{desired_joint_cmd: {position: [0.0, -0.785, 0.0, -2.356, 0.0, 1.571, 0.785]}, total_time: 5.0}"
 
-# goal cartesiano: posa, durata, gomito (.nan lo tiene)
+# Cartesian goal: pose, duration, elbow (.nan keeps it)
 ros2 action send_goal --feedback /panda/cart_traj uclv_panda_interfaces/action/CartTraj \
   "{desired_pose: {position: {x: 0.4, y: 0.0, z: 0.4}, orientation: {x: 1.0, y: 0.0, z: 0.0, w: 0.0}}, total_time: 5.0, desired_elbow: .nan}"
 
-# preset (durata e ampiezza facoltative)
+# preset (duration and amplitude are optional)
 ros2 service call /panda/run_preset uclv_panda_interfaces/srv/RunPreset "{preset: quintic_joint1}"
 
-# ferma il moto in corso
+# stop the current motion
 ros2 service call /panda/stop_motion std_srvs/srv/Trigger
 ```
 
-Un goal che porterebbe il robot oltre i finecorsa viene rifiutato; uno troppo veloce viene allungato fino a rispettare i limiti.
+A goal that would take the robot beyond its joint limits is rejected; one that is too fast is slowed down until it respects the limits.
 
-## Stato, errori e ripresa
+## State, errors and recovery
 
-Da Configure in poi ogni bridge pubblica:
+From Configure on, every bridge publishes:
 
-| Topic | Tipo | Contenuto |
+| Topic | Type | Content |
 |---|---|---|
-| `/joint_states` | `sensor_msgs/JointState` | posizioni, velocità e coppie dei giunti |
-| `/panda/robot_state` | `uclv_panda_interfaces/PandaRobotState` | stato completo: `q`, `q_d`, velocità, coppie, pose (`o_t_ee`, `o_t_ee_d`), forze esterne, modo ed errori del robot |
-| `/pose_state_read_ee` | `geometry_msgs/PoseStamped` | posa dell'end effector letta dal robot |
-| `/pose_state_computed_ee` | `geometry_msgs/PoseStamped` | posa della flangia calcolata dal modello |
-| `/panda/bridge_status` | `uclv_panda_interfaces/BridgeStatus` | stato del bridge e diagnostica: gli stessi campi del riquadro della GUI |
+| `/joint_states` | `sensor_msgs/JointState` | joint positions, velocities and torques |
+| `/panda/robot_state` | `uclv_panda_interfaces/PandaRobotState` | full state: `q`, `q_d`, velocities, torques, poses (`o_t_ee`, `o_t_ee_d`), external forces, robot mode and errors |
+| `/pose_state_read_ee` | `geometry_msgs/PoseStamped` | end-effector pose read from the robot |
+| `/pose_state_computed_ee` | `geometry_msgs/PoseStamped` | flange pose computed from the model |
+| `/panda/bridge_status` | `uclv_panda_interfaces/BridgeStatus` | bridge state and diagnostics: the same fields as the GUI panel |
 
 ```bash
-ros2 topic echo /panda/bridge_status                              # diagnostica
-ros2 service call /panda/error_recovery std_srvs/srv/Trigger      # ripresa dopo un errore (= Recover)
+ros2 topic echo /panda/bridge_status                              # diagnostics
+ros2 service call /panda/error_recovery std_srvs/srv/Trigger      # recovery after an error (= Recover)
 ```
 
-Cosa fa il bridge negli altri casi:
+What the bridge does in the other cases:
 
-| Evento | Cosa succede |
+| Event | What happens |
 |---|---|
-| il client smette di pubblicare | fermata dolce, poi il robot tiene la posizione |
-| l'end effector scende sotto `critical_height` | fermata dolce, e il loop si chiude con un errore |
-| reflex del robot o user stop | `error`; dopo Recover il robot tiene di nuovo la posizione |
-| Ctrl+C sul bridge, o chiusura del suo terminale | fermata dolce, poi il bridge esce |
-| la GUI si chiude di colpo | il bridge continua a tenere il robot; la GUI successiva lo segnala allo Start |
+| the client stops publishing | smooth stop, then the robot holds its position |
+| the end effector goes below `critical_height` | smooth stop, then the loop ends with an error |
+| robot reflex or user stop | `error`; after Recover the robot holds its position again |
+| Ctrl+C on the bridge, or its terminal is closed | smooth stop, then the bridge exits |
+| the GUI dies abruptly | the bridge keeps holding the robot; the next GUI reports it on Start |
 
-## Parametri
+## Parameters
 
-I parametri si impostano nella GUI prima di START NODE, oppure con `--ros-args -p nome:=valore` lanciando un bridge a mano.
+Set the parameters in the GUI before START NODE, or with `--ros-args -p name:=value` when you launch a bridge by hand.
 
-Comuni a tutti i bridge:
+Common to all bridges:
 
-| Parametro | Default | Significato |
+| Parameter | Default | Meaning |
 |---|---|---|
-| `robot_ip` | `10.224.20.198` | indirizzo del robot: metti quello del tuo |
-| `mode` | `external` | `external` (comandi dal topic) o `internal` (goal e preset) |
-| `auto_preset` | vuoto | preset da lanciare all'attivazione (internal) |
-| `publish_freq` | 100 | frequenza (Hz) di stato e status pubblicati |
-| `playout_delay_ms` | 5 (coppie: 1) | ritardo di riproduzione dei campioni (vedi [le regole](#le-regole)) |
-| `stall_timeout_ms` | 20 | buco dello stream oltre il quale il robot si ferma |
-| `command_timeout_ms` | 0 | senza comandi per questo tempo il loop si chiude; 0 = tiene la posizione per sempre |
-| `clamp` | true | un comando oltre i limiti viene saturato; con false ferma il robot |
-| `critical_height` | 0.1 | quota minima dell'end effector (m) |
-| `flange_T_ee_translation`, `flange_T_ee_rotation` | 0, `[1,0,0,0]` | flangia → end effector (quaternione w, x, y, z) |
-| `load`, `F_x_Cload`, `load_inertia` | 0 | massa, baricentro e inerzia del carico |
-| `show_details` | false | al Configure stampa anche jacobiano, matrice di massa, coriolis |
-| `collision_{lower,upper}_{torque,force}_thresholds` | come gli esempi di libfranka | soglie di collisione |
-| `joint_impedance`, `cartesian_impedance` | come gli esempi di libfranka | impedenze del controllore interno del robot |
-| `limit_rate`, `lpf_cutoff_frequency` | true, 100 | limitatore e filtro di libfranka |
-| `rt_cpu`, `lock_memory`, `executor_rt_priority` | -1, false, 0 | real-time: CPU dedicata al loop, mlock, priorità dell'executor |
-| `fake_robot` | false | robot simulato, per provare senza robot |
+| `robot_ip` | `10.224.20.198` | robot address: set yours |
+| `mode` | `external` | `external` (commands from the topic) or `internal` (goals and presets) |
+| `auto_preset` | empty | preset to start on activation (internal) |
+| `publish_freq` | 100 | rate (Hz) of the published state and status |
+| `playout_delay_ms` | 5 (torques: 1) | playback delay of the samples (see [the rules](#the-rules)) |
+| `stall_timeout_ms` | 20 | stream gap beyond which the robot is stopped |
+| `command_timeout_ms` | 0 | with no commands for this long the loop ends; 0 = hold the position forever |
+| `clamp` | true | a command beyond the limits is saturated; with false it stops the robot |
+| `critical_height` | 0.1 | minimum end-effector height (m) |
+| `flange_T_ee_translation`, `flange_T_ee_rotation` | 0, `[1,0,0,0]` | flange → end effector (quaternion w, x, y, z) |
+| `load`, `F_x_Cload`, `load_inertia` | 0 | mass, center of mass and inertia of the load |
+| `show_details` | false | on Configure, also prints the Jacobian, mass matrix and Coriolis |
+| `collision_{lower,upper}_{torque,force}_thresholds` | as in the libfranka examples | collision thresholds |
+| `joint_impedance`, `cartesian_impedance` | as in the libfranka examples | impedances of the robot's internal controller |
+| `limit_rate`, `lpf_cutoff_frequency` | true, 100 | libfranka rate limiter and filter |
+| `rt_cpu`, `lock_memory`, `executor_rt_priority` | -1, false, 0 | real time: CPU dedicated to the loop, mlock, executor priority |
+| `fake_robot` | false | simulated robot, to try things without a robot |
 
-Bridge di giunto:
+Joint bridges:
 
-| Parametro | Default | Bridge | Significato |
+| Parameter | Default | Bridge | Meaning |
 |---|---|---|---|
-| `safe_joint_speed_factor`, `_acceleration_factor`, `_jerk_factor` | 0.9, 0.8, 0.5 | tutti | frazione dei limiti di velocità, accelerazione e jerk del robot |
-| `joint_limit_margin` | 0.01 | tutti | margine dai finecorsa (rad) |
-| `max_jump` | 0.2 | posizioni | distanza massima (rad) del primo campione di uno stream |
-| `controller_mode` | `joint_impedance` | posizioni, velocità | controllore interno del robot |
-| `safe_torque_factor` | 0.9 | coppie | frazione dei limiti di coppia (87 Nm giunti 1-4, 12 Nm giunti 5-7) |
-| `torque_rate_factor` | 0.5 | coppie | frazione del limite di derivata della coppia (1000 Nm/s) |
-| `joint_stiffness` | `[600, 600, 600, 600, 250, 150, 50]` | coppie | rigidezza (Nm/rad) dei moti internal e dell'hold |
-| `joint_damping` | `[50, 50, 50, 50, 30, 25, 15]` | coppie | smorzamento (Nm·s/rad) |
+| `safe_joint_speed_factor`, `_acceleration_factor`, `_jerk_factor` | 0.9, 0.8, 0.5 | all | fraction of the robot's velocity, acceleration and jerk limits |
+| `joint_limit_margin` | 0.01 | all | margin from the joint limits (rad) |
+| `max_jump` | 0.2 | positions | maximum distance (rad) of the first sample of a stream |
+| `controller_mode` | `joint_impedance` | positions, velocities | the robot's internal controller |
+| `safe_torque_factor` | 0.9 | torques | fraction of the torque limits (87 Nm joints 1-4, 12 Nm joints 5-7) |
+| `torque_rate_factor` | 0.5 | torques | fraction of the torque rate limit (1000 Nm/s) |
+| `joint_stiffness` | `[600, 600, 600, 600, 250, 150, 50]` | torques | stiffness (Nm/rad) of internal motions and of the hold |
+| `joint_damping` | `[50, 50, 50, 50, 30, 25, 15]` | torques | damping (Nm·s/rad) |
 
-Bridge cartesiani:
+Cartesian bridges:
 
-| Parametro | Default | Significato |
+| Parameter | Default | Meaning |
 |---|---|---|
-| `safe_speed_factor`, `safe_acceleration_factor`, `safe_jerk_factor` | 0.6, 0.3, 0.3 | frazione dei limiti cartesiani del robot |
-| `use_elbow_control` | false | comanda anche il gomito (giunto 3) |
-| `max_jump`, `max_jump_angle` | 0.05, 0.2 | solo posa: distanza massima (m, rad) del primo campione di uno stream |
-| `controller_mode` | `cartesian_impedance` | controllore interno del robot |
+| `safe_speed_factor`, `safe_acceleration_factor`, `safe_jerk_factor` | 0.6, 0.3, 0.3 | fraction of the robot's Cartesian limits |
+| `use_elbow_control` | false | also command the elbow (joint 3) |
+| `max_jump`, `max_jump_angle` | 0.05, 0.2 | pose only: maximum distance (m, rad) of the first sample of a stream |
+| `controller_mode` | `cartesian_impedance` | the robot's internal controller |
 
-Per i bridge cartesiani parti da una configurazione lontana dalle singolarità e dai finecorsa: i giunti li calcola il robot, che può fermarsi con un reflex che il bridge non può prevedere.
+With the Cartesian bridges, start from a configuration far from singularities and joint limits: the robot computes the joints itself, and can stop with a reflex that the bridge cannot foresee.
 
-## Provare senza robot
+## Trying it without a robot
 
-Con `fake_robot:=true` il bridge usa un robot simulato: utile per provare un client o la GUI. Usa un dominio ROS diverso da quello del robot, così i comandi non arrivano mai a un bridge vero:
+With `fake_robot:=true` the bridge uses a simulated robot: useful to try a client or the GUI. Use a ROS domain different from the robot's, so that commands never reach a real bridge:
 
 ```bash
 export ROS_DOMAIN_ID=42 ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
@@ -400,53 +400,53 @@ ros2 lifecycle set /panda_joint_positions_bridge configure
 ros2 lifecycle set /panda_joint_positions_bridge activate
 ```
 
-Le schermate di questa pagina sono fatte così.
+The screenshots on this page were made this way.
 
-## Prove sul robot
+## Robot tests
 
-Una serie di prove per controllare, la prima volta, che tutto funzioni con il tuo robot e il tuo PC. Servono tre terminali:
+A series of tests to check, the first time, that everything works with your robot and your PC. You need three terminals:
 
-| Terminale | Comando | A cosa serve |
+| Terminal | Command | What it is for |
 |---|---|---|
-| 1 | `ros2 launch panda_utils gui.launch.py` | GUI: scegli il bridge e `mode`, poi START NODE → Configure → Activate |
-| 2 | `ros2 topic echo /panda/bridge_status` | diagnostica durante ogni prova |
-| 3 | `source ~/uclv_panda_ros2/install/setup.bash` | qui lanci i comandi delle tabelle |
+| 1 | `ros2 launch panda_utils gui.launch.py` | GUI: choose the bridge and `mode`, then START NODE → Configure → Activate |
+| 2 | `ros2 topic echo /panda/bridge_status` | diagnostics during each test |
+| 3 | `source ~/uclv_panda_ros2/install/setup.bash` | where you run the commands of the table |
 
-Tieni sempre lo user stop in mano. Per le prove internal imposta `mode internal` prima di START NODE.
+Always keep the user stop in your hand. For the internal tests, set `mode internal` before START NODE.
 
-| # | Bridge | `mode` | Comando | Cosa deve succedere |
+| # | Bridge | `mode` | Command | What should happen |
 |---|---|---|---|---|
-| 1 | Joint Position | external | `ros2 run panda_utils simple_joints_traj` | i 7 giunti scendono di 0.2 rad in 2 s, poi il robot tiene la posizione. Qualche `limited_cycles` è normale: il client parte dalla `q` misurata |
-| 2 | Joint Position | internal | preset `quintic_joint1` | il giunto 1 avanza di 0.2 rad in 10 s |
-| 3 | Joint Position | internal | preset `sine_joint1` | il giunto 1 va e torna in 10 s |
-| 4 | Joint Position | internal | goal dalla GUI: Current, un giunto ±0.1 rad, 5 s | il goal viene raggiunto |
-| 5 | Joint Velocity | external | `simple_velocity_traj` con la `q` attuale e un giunto cambiato di 0.1 rad | il robot arriva alle posizioni date in 5 s |
-| 6 | Joint Velocity | internal | preset `quintic_joint1` | come la prova 2 |
-| 7 | Joint Torque | internal | solo Activate | il robot resta fermo (hold in impedenza) |
-| 8 | Joint Torque | internal | preset `quintic_joint1` | come la prova 2, in impedenza |
-| 9 | Joint Torque | internal | preset `gravity_compensation`, poi Stop motion | il robot si muove a mano; dopo lo stop tiene la posizione |
-| 10 | Joint Torque | external | `ros2 run panda_utils simple_torque_cmd 10` | per 10 s il robot galleggia (tienilo con la mano), poi tiene la posizione |
-| 11 | Cartesian Position | external | `ros2 run panda_utils simple_cartesian_traj 0.03 0 0 5` | l'end effector si sposta di 3 cm lungo x, orientamento fermo |
-| 12 | Cartesian Position | external | `simple_cartesian_traj x y z qx qy qz qw 5` con la posa attuale un po' cambiata | l'end effector raggiunge la posa |
-| 13 | Cartesian Position | internal | preset `line_x` | avanti di 10 cm lungo x e ritorno, in 6 s |
-| 14 | Cartesian Position | internal | preset `circle_xy` | un cerchio di 5 cm di raggio, in 10 s |
-| 15 | Cartesian Position | internal | goal dalla GUI: Current, z +0.03, 5 s | il goal viene raggiunto |
-| 16 | Cartesian Velocity | external | `simple_cartesian_traj 0.03 0 0 5 --velocity` | come la prova 11 |
-| 17 | Cartesian Velocity | internal | preset `line_x` | come la prova 13 |
-| 18 | uno qualsiasi | external | Ctrl+C sul client a metà moto | fermata dolce, nessun reflex; `stalls` sale di 1 |
-| 19 | uno qualsiasi | | Deactivate e Activate 10 volte | ogni passo riesce |
-| 20 | uno qualsiasi | | user stop premuto, rilasciato, poi Recover | `error` e robot `user_stopped`; dopo Recover di nuovo `holding` |
-| 21 | uno qualsiasi | | Ctrl+C nel terminale della GUI con il bridge attivo | GUI e bridge escono in meno di un secondo |
+| 1 | Joint Position | external | `ros2 run panda_utils simple_joints_traj` | the 7 joints decrease by 0.2 rad in 2 s, then the robot holds its position. A few `limited_cycles` are normal: the client starts from the measured `q` |
+| 2 | Joint Position | internal | preset `quintic_joint1` | joint 1 moves forward by 0.2 rad in 10 s |
+| 3 | Joint Position | internal | preset `sine_joint1` | joint 1 goes forward and back in 10 s |
+| 4 | Joint Position | internal | goal from the GUI: Current, one joint ±0.1 rad, 5 s | the goal is reached |
+| 5 | Joint Velocity | external | `simple_velocity_traj` with the current `q` and one joint changed by 0.1 rad | the robot reaches the given positions in 5 s |
+| 6 | Joint Velocity | internal | preset `quintic_joint1` | as in test 2 |
+| 7 | Joint Torque | internal | Activate only | the robot stays still (hold in impedance) |
+| 8 | Joint Torque | internal | preset `quintic_joint1` | as in test 2, in impedance |
+| 9 | Joint Torque | internal | preset `gravity_compensation`, then Stop motion | the robot can be moved by hand; after the stop it holds its position |
+| 10 | Joint Torque | external | `ros2 run panda_utils simple_torque_cmd 10` | for 10 s the robot floats (hold it with your hand), then it holds its position |
+| 11 | Cartesian Position | external | `ros2 run panda_utils simple_cartesian_traj 0.03 0 0 5` | the end effector moves 3 cm along x, with the orientation unchanged |
+| 12 | Cartesian Position | external | `simple_cartesian_traj x y z qx qy qz qw 5` with the current pose slightly changed | the end effector reaches the pose |
+| 13 | Cartesian Position | internal | preset `line_x` | 10 cm forward along x and back, in 6 s |
+| 14 | Cartesian Position | internal | preset `circle_xy` | a circle of 5 cm radius, in 10 s |
+| 15 | Cartesian Position | internal | goal from the GUI: Current, z +0.03, 5 s | the goal is reached |
+| 16 | Cartesian Velocity | external | `simple_cartesian_traj 0.03 0 0 5 --velocity` | as in test 11 |
+| 17 | Cartesian Velocity | internal | preset `line_x` | as in test 13 |
+| 18 | any | external | Ctrl+C on the client halfway through the motion | smooth stop, no reflex; `stalls` goes up by 1 |
+| 19 | any | | Deactivate and Activate 10 times | every step succeeds |
+| 20 | any | | user stop pressed, released, then Recover | `error` and robot `user_stopped`; after Recover `holding` again |
+| 21 | any | | Ctrl+C in the GUI terminal with the bridge active | GUI and bridge exit in less than a second |
 
-Durante ogni prova, in `/panda/bridge_status`: `control_command_success_rate` vicino a 1, `last_error` vuoto (salvo la prova 20), `missed_cycles` che cresce poco, `stalls` a 0 quando uno stream finisce da solo.
+During each test, in `/panda/bridge_status`: `control_command_success_rate` close to 1, `last_error` empty (except in test 20), `missed_cycles` growing slowly, `stalls` at 0 when a stream ends by itself.
 
-## Test automatici
+## Automated tests
 
-Senza robot, su un dominio ROS isolato:
+Without a robot, on an isolated ROS domain:
 
 ```bash
 cd ~/uclv_panda_ros2
 colcon test --packages-select uclv_panda_interfaces panda_utils && colcon test-result --verbose
 ```
 
-Devono passare tutti: 90 gtest (pipeline, tracker e i cinque bridge su un robot simulato) più i linter `lint_cmake` e `xmllint`.
+They must all pass: 90 gtests (pipeline, trackers and the five bridges on a simulated robot) plus the `lint_cmake` and `xmllint` linters.

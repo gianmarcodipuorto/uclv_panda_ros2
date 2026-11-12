@@ -1,11 +1,11 @@
 <p align="right">
-  <a href="ARCHITETTURA.md"><img src="https://img.shields.io/badge/Italiano-8c959f?style=for-the-badge" alt="Italiano"></a>
-  <a href="ARCHITETTURA.en.md"><img src="https://img.shields.io/badge/English-0969da?style=for-the-badge" alt="English"></a>
+  <a href="ARCHITECTURE.md"><img src="https://img.shields.io/badge/English-0969da?style=for-the-badge" alt="English"></a>
+  <a href="ARCHITECTURE.it.md"><img src="https://img.shields.io/badge/Italiano-8c959f?style=for-the-badge" alt="Italiano"></a>
 </p>
 
 # How the bridges work
 
-This page is for those who change the code. To use the driver, the [README](../README.en.md) is enough.
+This page is for those who change the code. To use the driver, the [README](../README.md) is enough.
 
 ## The path of a command
 
