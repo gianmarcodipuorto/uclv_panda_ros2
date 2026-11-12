@@ -1,0 +1,37 @@
+# Parameters of the bridges started by bridge.launch.py: copy this file, change it and pass it with
+# params_file:=/path/to/the/copy.yaml. The README (Parameters) lists every parameter and its default.
+#
+# "/**" applies to every bridge; each bridge reads the parameters it declares and ignores the others.
+# A parameter that is not set keeps the default of the bridge. Doubles need a decimal point
+# (5.0, not 5).
+/**:
+  ros__parameters:
+    robot_ip: "10.224.20.198"
+    mode: "external"               # external: commands from the topic; internal: goals and presets
+
+    # Streams (external mode). Defaults: 5.0 ms, 1.0 ms for the torque bridge
+    # playout_delay_ms: 15.0         # client at 100 Hz
+    # stall_timeout_ms: 20.0
+    # command_timeout_ms: 0.0        # 0: hold the position forever without commands
+
+    # End effector and load
+    # flange_T_ee_translation: [0.0, 0.0, 0.0]
+    # flange_T_ee_rotation: [1.0, 0.0, 0.0, 0.0]      # quaternion w, x, y, z
+    # load: 0.0
+    # F_x_Cload: [0.0, 0.0, 0.0]
+    # load_inertia: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+    # Franka Hand
+    # use_gripper: true
+    # gripper_speed: 0.1             # m/s
+    # gripper_force: 20.0            # N, at most 70
+
+    # Safety
+    # critical_height: 0.1           # m
+    # clamp: true
+
+# Parameters of one bridge only go in a section with its name, for example:
+# panda_joint_torques_bridge:
+#   ros__parameters:
+#     joint_stiffness: [600.0, 600.0, 600.0, 600.0, 250.0, 150.0, 50.0]
+#     joint_damping: [50.0, 50.0, 50.0, 50.0, 30.0, 25.0, 15.0]

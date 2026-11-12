@@ -118,6 +118,9 @@ install(
   DESTINATION share/${PROJECT_NAME}/launch
 )
 
+# Parameters of the bridges started by bridge.launch.py
+install(DIRECTORY config/ DESTINATION share/${PROJECT_NAME}/config)
+
 install(PROGRAMS
   gui/panda_gui_py.py
   DESTINATION lib/${PROJECT_NAME}
