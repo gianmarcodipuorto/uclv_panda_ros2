@@ -9,7 +9,7 @@ import sys
 import threading
 import time
 import tkinter as tk
-from tkinter import ttk, scrolledtext, messagebox
+from tkinter import ttk, scrolledtext, messagebox, filedialog
 
 import rclpy
 from rclpy.action import ActionClient
@@ -343,6 +343,52 @@ class BridgeProcess:
             return False
 
 
+class RvizProcess:
+    """RViz with the robot and the rest of the cell (rviz.launch.py), started on request. In the
+    process group of the GUI too: Ctrl+C in the terminal of the launch also closes it."""
+
+    def __init__(self, post):
+        self.post = post
+        self.process = None
+
+    def start(self, scene, rviz_config, env):
+        args = ['ros2', 'launch', 'panda_utils', 'rviz.launch.py']
+        if scene:
+            args.append(f'scene:={scene}')
+        if rviz_config:
+            args.append(f'rviz_config:={rviz_config}')
+        self.process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
+                                        env=env)
+        threading.Thread(target=self._read, args=(self.process,), daemon=True).start()
+
+    def _read(self, process):
+        # RViz and its nodes talk a lot: only the errors reach the console, except a harmless one of
+        # the Franka model (inertia of a link, used only to draw inertia boxes)
+        for line in process.stdout:
+            if ('ERROR' in line or 'Error' in line) and 'unrealistic inertia' not in line:
+                self.post('log', (ANSI_SGR.sub('', line.rstrip()), 'red'))
+        self.post('rviz_exit', process.wait())
+
+    def running(self):
+        return self.process is not None and self.process.poll() is None
+
+    def stop(self):
+        """SIGINT to the launch, which closes its nodes; harder if it does not exit"""
+        if not self.running():
+            return
+        process = self.process
+        process.send_signal(signal.SIGINT)
+
+        def insist():
+            for stop in (process.terminate, process.kill):
+                try:
+                    process.wait(timeout=5.0)
+                    return
+                except subprocess.TimeoutExpired:
+                    stop()
+        threading.Thread(target=insist, daemon=True).start()
+
+
 class PandaGui:
     def __init__(self, root, node):
         self.root = root
@@ -371,6 +417,11 @@ class PandaGui:
         self.gripper_width_var = tk.StringVar()
         self.gripper_speed_var = tk.StringVar()
         self.gripper_force_var = tk.StringVar()
+        # RViz: files chosen in its window, kept while the GUI is open (empty = the defaults)
+        self.rviz = RvizProcess(self.post)
+        self.rviz_window = None
+        self.rviz_scene_var = tk.StringVar()
+        self.rviz_config_var = tk.StringVar()
 
         # Controller selection
         self.controller_var = tk.StringVar(value="joint_velocity")  # default
@@ -952,6 +1003,24 @@ class PandaGui:
                 row=first + offset, column=1, columnspan=5, sticky='ew')
             self.status_vars[key] = var
         frame.columnconfigure(5, weight=1)  # A wider window shows more of the long fields
+        # RViz with the robot and the cell, independent of the bridge
+        self.rviz_btn = tk.Button(
+            frame, text="RViz",
+            command=self.on_rviz,
+            bg="#455A64", fg="white",
+            font=("Arial", 11, "bold"),
+            relief=tk.RAISED, bd=3
+        )
+        self.rviz_btn.grid(row=0, column=6, rowspan=2, sticky='nsew', padx=(10, 0))
+        # Scene of the cell and configuration of RViz, for the next opening
+        self.rviz_scene_btn = tk.Button(
+            frame, text="Scene...",
+            command=self.on_rviz_scene,
+            bg="#607D8B", fg="white",
+            font=("Arial", 10, "bold"),
+            relief=tk.RAISED, bd=3
+        )
+        self.rviz_scene_btn.grid(row=2, column=6, rowspan=2, sticky='nsew', padx=(10, 0), pady=(4, 6))
         self.recover_btn = tk.Button(
             frame, text="Recover",
             command=self.on_recover,
@@ -1204,6 +1273,8 @@ class PandaGui:
                     self.on_process_exit(payload)
                 elif kind == 'stopped':
                     self.on_stopped()
+                elif kind == 'rviz_exit':
+                    self.log("RViz closed")
         except queue.Empty:
             pass
         self.root.after(100, self.drain_events)
@@ -1545,9 +1616,97 @@ class PandaGui:
         needs_recovery = (fresh and status.state == 'error') or (
             robot_state is not None and robot_state.robot_mode in ('reflex', 'user_stopped'))
         self.recover_btn.config(state=tk.NORMAL if running and needs_recovery else tk.DISABLED)
+        self.rviz_btn.config(text="Close\nRViz" if self.rviz.running() else "RViz")
+        self.rviz_scene_btn.config(state=tk.DISABLED if self.rviz.running() else tk.NORMAL)
 
         self.update_button_states()
         self.root.after(200, self.refresh_status)
+
+    # --- RViz ---
+
+    def on_rviz(self):
+        """Opens RViz, with only the robot unless a scene was chosen; closes it if open"""
+        if self.rviz.running():
+            self.log("Closing RViz...")
+            self.rviz.stop()
+            return
+        self.open_rviz()
+
+    def on_rviz_scene(self):
+        """The window where to choose the scene of the cell and the configuration of RViz"""
+        if self.rviz_window is not None:
+            self.rviz_window.lift()
+            return
+        window = tk.Toplevel(self.root)
+        window.title("RViz")
+        window.configure(bg="#B8C8C9")
+        window.transient(self.root)
+        window.resizable(True, False)
+        window.protocol("WM_DELETE_WINDOW", self.close_rviz_window)
+        self.rviz_window = window
+        frame = ttk.Frame(window, padding=12, style="Custom.TFrame")
+        frame.pack(fill=tk.BOTH, expand=True)
+        frame.columnconfigure(1, weight=1)
+        rows = (("Scene (xacro or URDF, empty = only the robot)", self.rviz_scene_var,
+                 [("xacro / URDF", "*.xacro *.urdf"), ("All files", "*")]),
+                ("RViz config (empty = the default one)", self.rviz_config_var,
+                 [("RViz config", "*.rviz"), ("All files", "*")]))
+        for row, (label, var, types) in enumerate(rows):
+            ttk.Label(frame, text=label, font=("Arial", 9, "bold"), style="Custom.TLabel").grid(
+                row=2 * row, column=0, columnspan=3, sticky='w', pady=(0 if row == 0 else 8, 2))
+            ttk.Entry(frame, textvariable=var, width=60, style="Custom.TEntry").grid(
+                row=2 * row + 1, column=0, columnspan=2, sticky='ew')
+            ttk.Button(frame, text="Browse", command=lambda var=var, types=types: self.browse_file(var, types)).grid(
+                row=2 * row + 1, column=2, padx=(6, 0))
+        buttons = ttk.Frame(frame, style="Custom.TFrame")
+        buttons.grid(row=4, column=0, columnspan=3, sticky='e', pady=(12, 0))
+        tk.Button(buttons, text="Open", command=self.open_rviz, bg="#455A64", fg="white",
+                  font=("Arial", 10, "bold"), width=10).pack(side=tk.LEFT, padx=(0, 6))
+        tk.Button(buttons, text="Cancel", command=self.close_rviz_window, width=10).pack(side=tk.LEFT)
+
+    def browse_file(self, var, types):
+        current = os.path.expanduser(var.get().strip())
+        path = filedialog.askopenfilename(parent=self.rviz_window, filetypes=types,
+                                          initialdir=os.path.dirname(current) if current else os.path.expanduser('~'))
+        if path:
+            var.set(path)
+
+    def close_rviz_window(self):
+        if self.rviz_window is not None:
+            self.rviz_window.destroy()
+            self.rviz_window = None
+
+    def open_rviz(self):
+        scene = self.rviz_scene_var.get().strip()
+        config = self.rviz_config_var.get().strip()
+        for name, path in (("Scene", scene), ("RViz config", config)):
+            if path and not os.path.isfile(os.path.expanduser(path)):
+                self.log(f"RViz: {name} file not found: {path}", 'yellow')
+                return
+        env = self.rviz_env()
+        if env is None:
+            self.log("RViz needs franka_description: clone it into the src folder of the workspace and build it "
+                     "(see the README)", 'red')
+            return
+        self.rviz.start(os.path.expanduser(scene), os.path.expanduser(config), env)
+        self.log("RViz opening" + (f" with the scene {os.path.basename(scene)}" if scene else " with the robot") + "...")
+        self.close_rviz_window()
+
+    @staticmethod
+    def rviz_env():
+        """Environment of RViz: the one of the GUI, plus franka_description of this workspace when the
+        terminal was set up before it was built. None without franka_description."""
+        env = dict(os.environ)
+        try:
+            get_package_prefix('franka_description')
+            return env
+        except PackageNotFoundError:
+            pass
+        candidate = os.path.join(os.path.dirname(get_package_prefix('panda_utils')), 'franka_description')
+        if not os.path.isdir(os.path.join(candidate, 'share', 'franka_description')):
+            return None
+        env['AMENT_PREFIX_PATH'] = os.pathsep.join(p for p in (candidate, env.get('AMENT_PREFIX_PATH', '')) if p)
+        return env
 
     # --- closing ---
 
@@ -1555,6 +1714,8 @@ class PandaGui:
         if self.closing:
             return
         self.closing = True
+        if self.rviz.running():
+            self.rviz.stop()
         if self.process.running():
             self.log("Closing: stopping the bridge first...")
             self.on_stop_node()
