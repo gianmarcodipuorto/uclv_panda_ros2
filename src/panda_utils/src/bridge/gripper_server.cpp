@@ -1,5 +1,6 @@
 #include "panda_utils/bridge/gripper_server.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -18,6 +19,12 @@ using namespace std::chrono_literals;
 constexpr double kEpsilon = 0.005;
 // Outer tolerance of a CLOSE without an expected width: any final opening counts as grasped [m]
 constexpr double kAnyWidth = 1.0;
+// A command that should move the fingers by more than this, and moves them by less, failed [m]
+constexpr double kMinTravel = 0.001;
+// Fingers closer than this to the maximum width rest on the outer end stop [m]
+constexpr double kEndStopMargin = 0.001;
+// Position move that takes the fingers off the outer end stop before a grasp [m]
+constexpr double kUnstick = 0.002;
 constexpr auto kStatePublishPeriod = 20ms;
 constexpr auto kFeedbackPeriod = 100ms;
 
@@ -49,7 +56,8 @@ GripperServer::GripperServer(rclcpp_lifecycle::LifecycleNode &node, std::unique_
     : logger_(node.get_logger().get_child("gripper")),
       clock_(node.get_clock()),
       backend_(std::move(backend)),
-      params_(params) {
+      params_(params),
+      group_(group) {
   reading_ = backend_->read_once();
   reading_count_ = 1;
 
@@ -177,6 +185,8 @@ void GripperServer::worker_thread_main() {
     const Outcome outcome = execute(handle, *result);
 
     lock.lock();
+    // Only a command that went wrong is a warning: not one canceled or replaced on request
+    bool failed = false;
     // A command that completed succeeds even if a cancel arrived meanwhile
     if (outcome == Outcome::kSucceeded) {
       handle->succeed(result);
@@ -188,10 +198,16 @@ void GripperServer::worker_thread_main() {
         result->message = "preempted by a newer goal";
       } else if (worker_exit_) {
         result->message = "stopped: the bridge is shutting down";
+      } else {
+        failed = true;
       }
       handle->abort(result);
     }
-    RCLCPP_INFO(logger_, "%s: %s", command_name(handle->get_goal()->command), result->message.c_str());
+    if (failed) {
+      RCLCPP_WARN(logger_, "%s failed: %s", command_name(handle->get_goal()->command), result->message.c_str());
+    } else {
+      RCLCPP_INFO(logger_, "%s: %s", command_name(handle->get_goal()->command), result->message.c_str());
+    }
     running_.reset();
   }
 }
@@ -205,7 +221,7 @@ GripperServer::Outcome GripperServer::execute(const std::shared_ptr<GoalHandle> 
   const double speed = goal->speed > 0.0 ? goal->speed : params_.speed;
   const double force = goal->force > 0.0 ? goal->force : params_.force;
   const bool any_width = !(goal->width > 0.0);
-  const GripperReading before = latest_reading();
+  GripperReading before = latest_reading();
 
   bool ok = false;
   std::string error;
@@ -215,6 +231,12 @@ GripperServer::Outcome GripperServer::execute(const std::shared_ptr<GoalHandle> 
         ok = backend_->move(before.max_width, speed);
         break;
       case Gripper::Goal::CLOSE:
+        // On the outer end stop the fingers may stick: a grasp, force limited, then does not start
+        // them, and the hand reports a grasp where they are. A short position move frees them.
+        if (before.width > before.max_width - kEndStopMargin) {
+          backend_->move(std::max(0.0, before.width - kUnstick), speed);
+          before = next_reading();
+        }
         ok = backend_->grasp(any_width ? 0.0 : goal->width, speed, force, kEpsilon, any_width ? kAnyWidth : kEpsilon);
         break;
       case Gripper::Goal::MOVE:
@@ -230,13 +252,39 @@ GripperServer::Outcome GripperServer::execute(const std::shared_ptr<GoalHandle> 
     error = e.what();
   }
 
-  const GripperReading after = next_reading();
+  GripperReading after = next_reading();
   result.width = after.width;
-  result.success = ok && error.empty();
   if (!error.empty()) {
+    result.success = false;
     result.message = error;
     return Outcome::kAborted;
   }
+
+  // Fingers that should have moved and did not: stuck, whatever the hand reports
+  double target = before.width;
+  if (goal->command == Gripper::Goal::OPEN) {
+    target = before.max_width;
+  } else if (goal->command == Gripper::Goal::CLOSE) {
+    target = any_width ? 0.0 : goal->width;
+  } else if (goal->command == Gripper::Goal::MOVE) {
+    target = goal->width;
+  }
+  if (std::abs(target - before.width) > kMinTravel && std::abs(after.width - before.width) < kMinTravel) {
+    result.success = false;
+    result.message = "the fingers did not move: try again, or run a homing (command 3)";
+    return Outcome::kAborted;
+  }
+
+  // Nothing between the fingers: stop squeezing them against each other, they stay closed
+  if (goal->command == Gripper::Goal::CLOSE && after.width < kEmptyWidth) {
+    try {
+      backend_->stop();
+    } catch (const franka::Exception &e) {
+      RCLCPP_WARN(logger_, "Could not release the force of the closed fingers: %s", e.what());
+    }
+  }
+
+  result.success = ok;
   switch (goal->command) {
     case Gripper::Goal::OPEN:
       result.message = ok ? "open at " + mm(after.width) : "open stopped at " + mm(after.width);

@@ -165,6 +165,9 @@ if(BUILD_TESTING)
   # ROS domain (215-232, localhost only) so that its commands never reach a real bridge
   ament_add_gtest(test_bridges test/test_bridges.cpp TIMEOUT 240)
   target_link_libraries(test_bridges panda_bridge_core)
+  # Franka Hand server on the fake hand, with fingers that stick; same ROS domain rule
+  ament_add_gtest(test_gripper_server test/test_gripper_server.cpp TIMEOUT 60)
+  target_link_libraries(test_gripper_server panda_bridge_core)
 endif()
 
 ament_package()

@@ -38,7 +38,16 @@ GripperReading FakeGripperBackend::read_once() {
   return reading;
 }
 
-void FakeGripperBackend::travel(double target, double speed) {
+void FakeGripperBackend::travel(double target, double speed, bool force_limited) {
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const bool on_outer_end_stop = width_ >= max_width_ - 1e-9;
+    if (jam_ == Jam::kAlways || (jam_ == Jam::kAtOuterEndStop && force_limited && on_outer_end_stop)) {
+      // The motor stalls at once: the hand takes it for a contact where the fingers are
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+      return;
+    }
+  }
   running_ = true;
   stop_requested_ = false;
   const double step = speed * std::chrono::duration<double>(kFakeStep).count();
@@ -68,7 +77,7 @@ bool FakeGripperBackend::homing() {
     std::lock_guard<std::mutex> lock(mutex_);
     is_grasped_ = false;
   }
-  travel(max_width_, 0.1);
+  travel(max_width_, 0.1, false);
   return true;
 }
 
@@ -80,7 +89,7 @@ bool FakeGripperBackend::move(double width, double speed) {
     std::lock_guard<std::mutex> lock(mutex_);
     is_grasped_ = false;
   }
-  travel(width, speed);
+  travel(width, speed, false);
   std::lock_guard<std::mutex> lock(mutex_);
   return std::abs(width_ - width) < 1e-9;
 }
@@ -90,9 +99,14 @@ bool FakeGripperBackend::grasp(double width, double speed, double force, double 
   if (!(width >= 0.0 && width <= max_width_) || !(speed > 0.0) || !(force > 0.0)) {
     throw franka::CommandException("libfranka gripper: Command failed!");
   }
-  travel(0.0, speed);
+  travel(0.0, speed, true);
   std::lock_guard<std::mutex> lock(mutex_);
   is_grasped_ = width - epsilon_inner < width_ && width_ < width + epsilon_outer;
+  return is_grasped_;
+}
+
+bool FakeGripperBackend::grasping() {
+  std::lock_guard<std::mutex> lock(mutex_);
   return is_grasped_;
 }
 

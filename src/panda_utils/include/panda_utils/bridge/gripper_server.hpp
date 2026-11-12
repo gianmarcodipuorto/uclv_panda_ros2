@@ -73,6 +73,8 @@ class GripperServer {
   std::unique_ptr<GripperBackend> backend_;
   Params params_;
 
+  // The node keeps callback groups by weak reference: this one lives as long as the server
+  rclcpp::CallbackGroup::SharedPtr group_;
   rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr state_pub_;
   rclcpp_action::Server<Gripper>::SharedPtr action_server_;
 

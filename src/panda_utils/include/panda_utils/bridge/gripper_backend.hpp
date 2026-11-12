@@ -50,11 +50,21 @@ class FrankaGripperBackend : public GripperBackend {
 
 // Test-only Franka Hand: the fingers move at the commanded speed on the wall clock and an object
 // of object_width (0 = none) stops them while closing. A stop aborts a running command as on the
-// real gripper; with no command running it releases the grasp.
+// real gripper; with no command running it releases the grasp. The fingers start fully open.
 class FakeGripperBackend : public GripperBackend {
  public:
-  explicit FakeGripperBackend(double object_width = 0.0, double max_width = 0.08)
-      : width_(max_width), max_width_(max_width), object_width_(object_width) {}
+  // Fingers that stick, as seen on a real hand
+  enum class Jam {
+    kNone,
+    // Resting on the outer end stop, a grasp (force limited) does not start them, and reports a
+    // grasp where they are; a move does start them
+    kAtOuterEndStop,
+    // Nothing moves them
+    kAlways,
+  };
+
+  explicit FakeGripperBackend(double object_width = 0.0, double max_width = 0.08, Jam jam = Jam::kNone)
+      : width_(max_width), max_width_(max_width), object_width_(object_width), jam_(jam) {}
 
   GripperReading read_once() override;
   bool homing() override;
@@ -62,15 +72,19 @@ class FakeGripperBackend : public GripperBackend {
   bool grasp(double width, double speed, double force, double epsilon_inner, double epsilon_outer) override;
   bool stop() override;
 
+  // Whether the fingers are pressing on what they grasped
+  bool grasping();
+
  private:
   // Moves the fingers towards target, stopping on the object while closing. Throws if stopped.
-  void travel(double target, double speed);
+  void travel(double target, double speed, bool force_limited);
 
   std::mutex mutex_;
   double width_;
   double max_width_;
   bool is_grasped_{false};
   double object_width_;
+  Jam jam_;
   std::atomic<bool> running_{false};
   std::atomic<bool> stop_requested_{false};
 };
