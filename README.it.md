@@ -19,14 +19,15 @@ Il codice precedente a questa versione è nel branch [`old`](https://github.com/
 4. [Collegare il robot](#collegare-il-robot)
 5. [Avvio rapido](#avvio-rapido)
 6. [La GUI](#la-gui)
-7. [Comandare il robot da un proprio programma](#comandare-il-robot-da-un-proprio-programma)
-8. [Moti interni: goal e preset](#moti-interni-goal-e-preset)
-9. [La Franka Hand](#la-franka-hand)
-10. [Stato, errori e ripresa](#stato-errori-e-ripresa)
-11. [Parametri](#parametri)
-12. [Provare senza robot](#provare-senza-robot)
-13. [Prove sul robot](#prove-sul-robot)
-14. [Test automatici](#test-automatici)
+7. [Senza GUI](#senza-gui)
+8. [Comandare il robot da un proprio programma](#comandare-il-robot-da-un-proprio-programma)
+9. [Moti interni: goal e preset](#moti-interni-goal-e-preset)
+10. [La Franka Hand](#la-franka-hand)
+11. [Stato, errori e ripresa](#stato-errori-e-ripresa)
+12. [Parametri](#parametri)
+13. [Provare senza robot](#provare-senza-robot)
+14. [Prove sul robot](#prove-sul-robot)
+15. [Test automatici](#test-automatici)
 
 ## Come è fatto
 
@@ -163,8 +164,9 @@ Da valutare: gli interrupt della scheda di rete sulla stessa CPU del loop (`rt_c
 | 1 | **Controller Actions** | avvia il bridge e lo porta attraverso i suoi stati (tabella sotto) |
 | 2 | **Parameters** | parametri del bridge scelto; si bloccano mentre il bridge è in esecuzione |
 | 3 | **Motion controller selection** | quale bridge avviare: giunti sulla prima riga, cartesiani sulla seconda |
-| 4 | **Bridge status** | stato del bridge, del robot e della Franka Hand, aggiornato 5 volte al secondo; pulsanti **Open hand**, **Close hand**, **Recover** e **Internal motions** |
+| 4 | **Bridge status** | stato del bridge, del robot e della Franka Hand, aggiornato 5 volte al secondo; pulsanti **Recover** e **Internal motions** |
 | 5 | **Output Console** | il log della GUI e del bridge: errori in rosso, avvisi in giallo |
+| 6 | **Franka Hand** | i comandi della pinza: larghezza, velocità e forza (vuoti = default del bridge), **Open**, **Close**, **Move**, **Homing**, **Stop** |
 
 I pulsanti si abilitano solo quando l'azione è possibile:
 
@@ -175,7 +177,7 @@ I pulsanti si abilitano solo quando l'azione è possibile:
 | Activate | parte il loop di controllo a 1 kHz; il robot tiene la posizione |
 | Deactivate | fermata dolce, poi il loop si chiude; il robot resta connesso |
 | Stop Controller | Deactivate (se attivo), poi chiude il bridge |
-| Open hand, Close hand | aprono la Franka Hand, o la chiudono con la forza del parametro **Franka Hand, grasp force**, in ogni bridge e modalità; attivi mentre la pinza è collegata |
+| barra Franka Hand | **Open**, **Close** (con la forza della barra, o del parametro **Franka Hand, grasp force**), **Move** alla larghezza, **Homing**, **Stop**; in ogni bridge e modalità, attivi mentre la pinza è collegata |
 
 Se un passo fallisce, per esempio Configure con il robot non raggiungibile, compare un errore e la console dice perché.
 
@@ -216,6 +218,25 @@ Scegliendo **Mode** `internal` si apre la finestra **Internal motions**. Se la c
 Dopo un reflex del robot, lo user stop o un errore del bridge, **State** diventa `error`, la causa compare in **Last error** e in rosso nella console, e si abilita **Recover**. Recover esegue la procedura di ripresa di libfranka e, se il bridge è attivo, il robot torna a tenere la posizione.
 
 Nella schermata il bridge si è fermato perché non riceveva comandi da più di 500 ms (parametro **Timeout Commands ms**).
+
+## Senza GUI
+
+Per lasciare il driver acceso, o per avviarlo da uno script, usa `bridge.launch.py`: avvia un bridge, lo configura e lo attiva.
+
+```bash
+ros2 launch panda_utils bridge.launch.py bridge:=joint_positions
+ros2 launch panda_utils bridge.launch.py bridge:=cartesian_velocity mode:=internal robot_ip:=172.16.0.2
+ros2 launch panda_utils bridge.launch.py bridge:=joint_torques params_file:=/path/to/my.yaml activate:=false
+```
+
+| Argomento | Default | Significato |
+|---|---|---|
+| `bridge` | `joint_positions` | `joint_positions`, `joint_velocities`, `joint_torques`, `cartesian_position` o `cartesian_velocity` |
+| `params_file` | `config/bridge.yaml` del pacchetto | file YAML con i parametri (vedi [Parametri](#parametri)) |
+| `activate` | `true` | `false`: solo configurazione; l'attivazione poi con `ros2 lifecycle set /panda_<bridge>_bridge activate` |
+| `robot_ip`, `mode` | dal file | sostituiscono il valore del file |
+
+Per i tuoi parametri copia `src/panda_utils/config/bridge.yaml`, modificalo e passalo con `params_file`: i commenti spiegano come. Ctrl+C ferma il robot dolcemente, poi il bridge esce. Mentre un bridge gira così la GUI non può avviarne un altro: al robot si collega un solo bridge alla volta.
 
 ## Comandare il robot da un proprio programma
 
@@ -319,7 +340,7 @@ Un goal che porterebbe il robot oltre i finecorsa viene rifiutato; uno troppo ve
 
 ## La Franka Hand
 
-Ogni bridge comanda la Franka Hand con l'azione `/panda/gripper`, da Configure a Cleanup: in tutte e due le modalità, con il braccio fermo, in moto o disattivato. La pinza ha una connessione sua, quindi i suoi comandi non rallentano mai il loop a 1 kHz del braccio. Nella GUI: **Open hand** e **Close hand**.
+Ogni bridge comanda la Franka Hand con l'azione `/panda/gripper`, da Configure a Cleanup: in tutte e due le modalità, con il braccio fermo, in moto o disattivato. La pinza ha una connessione sua, quindi i suoi comandi non rallentano mai il loop a 1 kHz del braccio. Nella GUI: la barra **Franka Hand** sotto la console.
 
 | `command` | Cosa fa | Campi usati |
 |---|---|---|
@@ -343,7 +364,7 @@ ros2 action send_goal /panda/gripper uclv_panda_interfaces/action/Gripper "{comm
 
 Il risultato ha `success`, la larghezza finale `width` (m) e un `message`, per esempio `holding an object 30.0 mm wide` o `closed: nothing between the fingers`. Il feedback è l'apertura mentre le dita si muovono.
 
-- Un goal nuovo ferma quello in corso, che finisce come `preempted by a newer goal`: premendo Open hand mentre la pinza si chiude, si riapre subito.
+- Un goal nuovo ferma quello in corso, che finisce come `preempted by a newer goal`: premendo Open mentre la pinza si chiude, si riapre subito.
 - Il cancel di un goal ferma le dita dove sono.
 - Dopo un CLOSE su un oggetto la pinza continua a tenerlo, anche quando il bridge si chiude. Dopo un CLOSE a vuoto smette di stringere: le dita restano chiuse senza premere l'una sull'altra.
 - Appoggiate al finecorsa esterno (tutte aperte, come dopo un homing) le dita possono incastrarsi, e una presa da sola non le stacca: CLOSE prima le sposta di 2 mm con un movimento in posizione.
@@ -371,7 +392,7 @@ Da Configure in poi ogni bridge pubblica:
 | Topic | Tipo | Contenuto |
 |---|---|---|
 | `/joint_states` | `sensor_msgs/JointState` | posizioni, velocità e coppie dei giunti |
-| `/panda/robot_state` | `uclv_panda_interfaces/PandaRobotState` | stato completo: `q`, `q_d`, velocità, coppie, pose (`o_t_ee`, `o_t_ee_d`), forze esterne, modo ed errori del robot |
+| `/panda/robot_state` | `uclv_panda_interfaces/PandaRobotState` | stato completo: `q`, `q_d`, velocità, coppie, pose (`o_t_ee`, `o_t_ee_d`), forze esterne, modo ed errori del robot, modello dinamico ([sotto](#il-modello-dinamico)) |
 | `/pose_state_read_ee` | `geometry_msgs/PoseStamped` | posa dell'end effector letta dal robot |
 | `/pose_state_computed_ee` | `geometry_msgs/PoseStamped` | posa della flangia calcolata dal modello |
 | `/panda/gripper_state` | `sensor_msgs/JointState` | apertura della Franka Hand: `fer_finger_joint1` e `fer_finger_joint2`, metà dell'apertura ciascuno |
@@ -380,6 +401,21 @@ Da Configure in poi ogni bridge pubblica:
 ```bash
 ros2 topic echo /panda/bridge_status                              # diagnostica
 ros2 service call /panda/error_recovery std_srvs/srv/Trigger      # ripresa dopo un errore (= Recover)
+```
+
+### Il modello dinamico
+
+Con il robot vero, `/panda/robot_state` porta anche il modello di libfranka in quello stato: `jacobian` (jacobiano zero dello stesso end effector di `o_t_ee`), `mass`, `coriolis` (C(q, dq)·dq) e `gravity` (con il carico impostato sul robot), con `has_model` a true. Il robot simulato non ha un modello: `has_model` è false e i vettori sono a zero. Il bridge li calcola nel thread publisher, mai nel loop di controllo. Le matrici sono column-major, come in libfranka:
+
+```python
+import numpy as np
+
+def on_state(msg):
+    if msg.has_model:
+        J = np.array(msg.jacobian).reshape(7, 6).T  # 6x7
+        M = np.array(msg.mass).reshape(7, 7).T      # 7x7
+        twist = J @ np.array(msg.dq)                 # end effector (v, w) in the base frame
+        tau_free = np.array(msg.gravity) + np.array(msg.coriolis)
 ```
 
 Cosa fa il bridge negli altri casi:
@@ -495,11 +531,13 @@ Tieni sempre lo user stop in mano. Per le prove internal imposta `mode internal`
 | 19 | uno qualsiasi | | Deactivate e Activate 10 volte | ogni passo riesce |
 | 20 | uno qualsiasi | | user stop premuto, rilasciato, poi Recover | `error` e robot `user_stopped`; dopo Recover di nuovo `holding` |
 | 21 | uno qualsiasi | | Ctrl+C nel terminale della GUI con il bridge attivo | GUI e bridge escono in meno di un secondo |
-| 22 | uno qualsiasi | | Close hand, poi Open hand, senza niente tra le dita | le dita si chiudono del tutto (`closed: nothing between the fingers`), poi si aprono fino alla larghezza massima |
-| 23 | uno qualsiasi | | un oggetto tra le dita, poi Close hand | `holding an object … mm wide`, con la larghezza dell'oggetto; la pinza lo tiene fino a Open hand |
-| 24 | Joint Position | external | Close hand e Open hand durante `simple_joints_traj` | lo stream continua senza disturbi: `stalls` 0, success rate vicino a 1 |
+| 22 | uno qualsiasi | | Close, poi Open (barra Franka Hand), senza niente tra le dita | le dita si chiudono del tutto (`closed: nothing between the fingers`), poi si aprono fino alla larghezza massima |
+| 23 | uno qualsiasi | | un oggetto tra le dita, poi Close | `holding an object … mm wide`, con la larghezza dell'oggetto; la pinza lo tiene fino a Open |
+| 24 | Joint Position | external | Close e Open durante `simple_joints_traj` | lo stream continua senza disturbi: `stalls` 0, success rate vicino a 1 |
 | 25 | uno qualsiasi | | `ros2 action send_goal /panda/gripper uclv_panda_interfaces/action/Gripper "{command: 3}"` | homing: le dita si chiudono e si aprono, il risultato dà la larghezza massima |
-| 26 | uno qualsiasi | | subito dopo la prova 25, Close hand | le dita si chiudono: CLOSE prima le stacca dal finecorsa esterno |
+| 26 | uno qualsiasi | | subito dopo la prova 25, Close | le dita si chiudono: CLOSE prima le stacca dal finecorsa esterno |
+| 27 | uno qualsiasi | | robot fermo, `ros2 topic echo --once /panda/robot_state` | `has_model` true; `gravity` vicino a `tau_j`, entro pochi Nm |
+| 28 | Joint Position | external | senza GUI: `ros2 launch panda_utils bridge.launch.py bridge:=joint_positions robot_ip:=<ip-del-robot>`, poi `simple_joints_traj` | il bridge parte già attivo e segue lo stream; Ctrl+C lo ferma |
 
 Durante ogni prova, in `/panda/bridge_status`: `control_command_success_rate` vicino a 1, `last_error` vuoto (salvo la prova 20), `missed_cycles` che cresce poco, `stalls` a 0 quando uno stream finisce da solo.
 

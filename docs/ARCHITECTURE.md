@@ -21,7 +21,7 @@ client ──topic──▶ subscription ──lock-free queue──▶ 1 kHz lo
 Each bridge uses these threads:
 
 - **Robot thread.** With the bridge active it runs `robot.control()`, which libfranka raises to SCHED_FIFO 99. With the bridge inactive it reads the state with `readOnce()` at `publish_freq`.
-- **Publisher thread.** It publishes state and status at `publish_freq` and writes the loop events to the log.
+- **Publisher thread.** It publishes state and status at `publish_freq`, with the dynamic model of `franka::Model` (Jacobian, mass, Coriolis, gravity), and writes the loop events to the log.
 - **Executor.** A MultiThreadedExecutor with 5 threads: lifecycle, commands, actions and services, recovery, gripper.
 - **Gripper threads.** With a Franka Hand: one reads its state and publishes it, one runs its commands (see [The Franka Hand](#the-franka-hand)).
 
@@ -114,7 +114,7 @@ There is no source file per bridge: the bridges are two families of shared code,
 | File | Content |
 |---|---|
 | `msg/JointsCommandedPositions.msg` | joint position command |
-| `msg/PandaRobotState.msg` | full robot state |
+| `msg/PandaRobotState.msg` | full robot state and dynamic model |
 | `msg/BridgeStatus.msg` | bridge state and diagnostics |
 | `srv/RunPreset.srv` | starts a preset (name, duration, amplitude) |
 | `action/JointTraj.action` | joint goal: positions and duration |
@@ -165,6 +165,8 @@ The headers are in `include/panda_utils/bridge/`, the sources in `src/bridge/`.
 | `include/panda_utils/constants.hpp`, `utils_func.hpp` | names, QoS and shared geometric functions |
 | `gui/panda_gui_py.py` | the GUI (Tkinter + rclpy) |
 | `launch/gui.launch.py` | launches the GUI |
+| `launch/bridge.launch.py` | starts one bridge without the GUI, then configures and activates it |
+| `config/bridge.yaml` | parameters of the bridges for `bridge.launch.py`, with comments |
 | `src/panda_gui.cpp` | old Qt GUI, no longer used |
 
 ### Tests (`panda_utils/test/`)
