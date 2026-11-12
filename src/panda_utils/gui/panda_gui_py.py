@@ -19,8 +19,9 @@ from action_msgs.msg import GoalStatus
 from ament_index_python.packages import PackageNotFoundError, get_package_prefix
 from lifecycle_msgs.msg import Transition, TransitionEvent
 from lifecycle_msgs.srv import ChangeState, GetState
+from sensor_msgs.msg import JointState
 from std_srvs.srv import Trigger
-from uclv_panda_interfaces.action import CartTraj, JointTraj
+from uclv_panda_interfaces.action import CartTraj, Gripper, JointTraj
 from uclv_panda_interfaces.msg import BridgeStatus, PandaRobotState
 from uclv_panda_interfaces.srv import RunPreset
 
@@ -64,9 +65,14 @@ class RosLink:
         self.status_time = 0.0
         self.robot_state = None
         self.time_left = None
+        self.gripper_width = None
+        self.gripper_time = 0.0
+        self.gripper_message = ''
 
         node.create_subscription(BridgeStatus, '/panda/bridge_status', self._on_status, 10)
         node.create_subscription(PandaRobotState, '/panda/robot_state', self._on_robot_state, 10)
+        node.create_subscription(JointState, '/panda/gripper_state', self._on_gripper_state, 10)
+        self.gripper_goals = ActionClient(node, Gripper, '/panda/gripper')
         self.preset_client = node.create_client(RunPreset, '/panda/run_preset')
         self.stop_client = node.create_client(Trigger, '/panda/stop_motion')
         self.recovery_client = node.create_client(Trigger, '/panda/error_recovery')
@@ -89,10 +95,16 @@ class RosLink:
             self.status = None
             self.robot_state = None
             self.time_left = None
+            self.gripper_width = None
+            self.gripper_message = ''
 
     def snapshot(self):
         with self.lock:
             return self.lifecycle, self.status, self.status_time, self.robot_state, self.time_left
+
+    def gripper_snapshot(self):
+        with self.lock:
+            return self.gripper_width, self.gripper_time, self.gripper_message
 
     # --- lifecycle ---
 
@@ -151,6 +163,44 @@ class RosLink:
     def _on_robot_state(self, msg):
         with self.lock:
             self.robot_state = msg
+
+    def _on_gripper_state(self, msg):
+        with self.lock:
+            self.gripper_width = sum(msg.position)  # Each finger moves by half of the opening
+            self.gripper_time = time.monotonic()
+
+    # --- Franka Hand ---
+
+    def send_gripper(self, command, label):
+        if not self.gripper_goals.server_is_ready():
+            self.post('log', (f'Franka Hand {label}: action server not available (is a hand connected?)', 'yellow'))
+            return
+        goal = Gripper.Goal()
+        goal.command = command
+        future = self.gripper_goals.send_goal_async(goal)
+        future.add_done_callback(lambda f: self._on_gripper_response(label, f))
+
+    def _on_gripper_response(self, label, future):
+        try:
+            handle = future.result()
+        except Exception as e:
+            self.post('log', (f'Franka Hand {label} failed: {e}', 'red'))
+            return
+        if not handle.accepted:
+            self.post('log', (f'Franka Hand {label} rejected: the bridge log says why', 'yellow'))
+            return
+        handle.get_result_async().add_done_callback(lambda f: self._on_gripper_result(label, f))
+
+    def _on_gripper_result(self, label, future):
+        try:
+            response = future.result()
+            message = response.result.message
+            ok = response.status == GoalStatus.STATUS_SUCCEEDED
+        except Exception as e:
+            message, ok = f'failed: {e}', False
+        with self.lock:
+            self.gripper_message = message
+        self.post('log', (f'Franka Hand {label}: {message}', None if ok else 'yellow'))
 
     # --- services ---
 
@@ -487,6 +537,8 @@ class PandaGui:
         self.param_configs = {
             "joint_velocity": {
                 'robot_ip': tk.StringVar(value="10.224.20.198"),
+                'use_gripper': tk.BooleanVar(value=True),
+                'gripper_force': tk.StringVar(value="20.0"),
                 'safe_joint_speed_factor': tk.StringVar(value="0.9"),
                 'clamp': tk.BooleanVar(value=True),
                 'show_details': tk.BooleanVar(value=False),
@@ -505,6 +557,8 @@ class PandaGui:
             },
             "joint_position": {
                 'robot_ip': tk.StringVar(value="10.224.20.198"),
+                'use_gripper': tk.BooleanVar(value=True),
+                'gripper_force': tk.StringVar(value="20.0"),
                 'safe_joint_speed_factor': tk.StringVar(value="0.9"),
                 'clamp': tk.BooleanVar(value=True),
                 'show_details': tk.BooleanVar(value=False),
@@ -524,6 +578,8 @@ class PandaGui:
             },
             "cartesian_velocity": {
                 'robot_ip': tk.StringVar(value="10.224.20.198"),
+                'use_gripper': tk.BooleanVar(value=True),
+                'gripper_force': tk.StringVar(value="20.0"),
                 'safe_speed_factor': tk.StringVar(value="0.6"),
                 'clamp': tk.BooleanVar(value=True),
                 'show_details': tk.BooleanVar(value=False),
@@ -543,6 +599,8 @@ class PandaGui:
             },
             "cartesian_position": {
                 'robot_ip': tk.StringVar(value="10.224.20.198"),
+                'use_gripper': tk.BooleanVar(value=True),
+                'gripper_force': tk.StringVar(value="20.0"),
                 'safe_speed_factor': tk.StringVar(value="0.7"),
                 'clamp': tk.BooleanVar(value=True),
                 'show_details': tk.BooleanVar(value=False),
@@ -563,6 +621,8 @@ class PandaGui:
             },
             "joint_torque": {
                 'robot_ip': tk.StringVar(value="10.224.20.198"),
+                'use_gripper': tk.BooleanVar(value=True),
+                'gripper_force': tk.StringVar(value="20.0"),
                 'safe_torque_factor': tk.StringVar(value="0.9"),
                 'torque_rate_factor': tk.StringVar(value="0.5"),
                 'clamp': tk.BooleanVar(value=True),
@@ -621,7 +681,8 @@ class PandaGui:
                     ('clamp', 'Clamp'),
                     ('publish_freq', 'Publisher Frequency'),
                     ('flange_T_ee_translation', 'EE Translation (x,y,z)'),
-                    ('flange_T_ee_rotation', 'EE Rotation (w,x,y,z)')
+                    ('flange_T_ee_rotation', 'EE Rotation (w,x,y,z)'),
+                    ('use_gripper', 'Franka Hand, grasp force N (max 70)')
                 ],
                 "right": [
                     ('show_details', 'Show Details'),
@@ -643,7 +704,8 @@ class PandaGui:
                     ('clamp', 'Clamp'),
                     ('publish_freq', 'Publisher Frequency'),
                     ('flange_T_ee_translation', 'EE Translation (x,y,z)'),
-                    ('flange_T_ee_rotation', 'EE Rotation (w,x,y,z)')
+                    ('flange_T_ee_rotation', 'EE Rotation (w,x,y,z)'),
+                    ('use_gripper', 'Franka Hand, grasp force N (max 70)')
                 ],
                 "right": [
                     ('show_details', 'Show Details'),
@@ -667,7 +729,8 @@ class PandaGui:
                     ('publish_freq', 'Publisher Frequency'),
                     ('use_elbow_control', 'Elbow Control'),
                     ('flange_T_ee_translation', 'EE Translation (x,y,z)'),
-                    ('flange_T_ee_rotation', 'EE Rotation (w,x,y,z)')
+                    ('flange_T_ee_rotation', 'EE Rotation (w,x,y,z)'),
+                    ('use_gripper', 'Franka Hand, grasp force N (max 70)')
                 ],
                 "right": [
                     ('show_details', 'Show Details'),
@@ -690,7 +753,8 @@ class PandaGui:
                     ('publish_freq', 'Publisher Frequency'),
                     ('use_elbow_control', 'Elbow Control'),
                     ('flange_T_ee_translation', 'EE Translation (x,y,z)'),
-                    ('flange_T_ee_rotation', 'EE Rotation (w,x,y,z)')
+                    ('flange_T_ee_rotation', 'EE Rotation (w,x,y,z)'),
+                    ('use_gripper', 'Franka Hand, grasp force N (max 70)')
                 ],
                 "right": [
                     ('show_details', 'Show Details'),
@@ -714,7 +778,8 @@ class PandaGui:
                     ('clamp', 'Clamp'),
                     ('publish_freq', 'Publisher Frequency'),
                     ('joint_stiffness', 'Stiffness (7, Nm/rad)'),
-                    ('joint_damping', 'Damping (7, Nm s/rad)')
+                    ('joint_damping', 'Damping (7, Nm s/rad)'),
+                    ('use_gripper', 'Franka Hand, grasp force N (max 70)')
                 ],
                 "right": [
                     ('show_details', 'Show Details'),
@@ -804,6 +869,14 @@ class PandaGui:
                                  state='readonly', font=("Arial", 10))
             combo.grid(row=1, column=1, sticky='ew', pady=(0, 2))
             self.param_widgets.append(combo)
+        elif param_key == 'use_gripper':
+            # Franka Hand on one row: whether to use it, and the grasping force of Close hand
+            cb = tk.Checkbutton(param_frame, text="ON", variable=var, bg='#f8f8f8', font=("Arial", 9))
+            cb.grid(row=1, column=0, sticky='w', pady=(0, 2), padx=(0, 8))
+            entry = ttk.Entry(param_frame, textvariable=self.params['gripper_force'], font=("Arial", 10),
+                              style="Custom.TEntry")
+            entry.grid(row=1, column=1, sticky='ew', pady=(0, 2))
+            self.param_widgets += [cb, entry]
         elif isinstance(var, tk.BooleanVar):
             # Checkbox compatta
             cb = tk.Checkbutton(
@@ -847,7 +920,7 @@ class PandaGui:
                 self.state_label = label
         # Long fields on rows of their own, as wide as the columns above: longer texts are cut
         first = (len(fields) + 2) // 3
-        for offset, (key, title) in enumerate([('robot', 'Robot'), ('error', 'Last error'),
+        for offset, (key, title) in enumerate([('robot', 'Robot'), ('gripper', 'Franka Hand'), ('error', 'Last error'),
                                                ('joints', 'q (rad)'), ('pose', 'EE x y z | qx qy qz qw')]):
             ttk.Label(frame, text=title + ":", font=("Arial", 9, "bold"), style="Custom.TLabel").grid(
                 row=first + offset, column=0, sticky='w', padx=(0, 4))
@@ -856,6 +929,23 @@ class PandaGui:
                 row=first + offset, column=1, columnspan=5, sticky='ew')
             self.status_vars[key] = var
         frame.columnconfigure(5, weight=1)  # A wider window shows more of the long fields
+        # Franka Hand: in every bridge and mode, from Configure on
+        self.gripper_open_btn = tk.Button(
+            frame, text="Open hand",
+            command=lambda: self.ros.send_gripper(Gripper.Goal.OPEN, 'open'),
+            bg="#607D8B", fg="white",
+            font=("Arial", 10, "bold"),
+            relief=tk.RAISED, bd=3
+        )
+        self.gripper_open_btn.grid(row=0, column=6, rowspan=2, sticky='nsew', padx=(10, 0))
+        self.gripper_close_btn = tk.Button(
+            frame, text="Close hand",
+            command=lambda: self.ros.send_gripper(Gripper.Goal.CLOSE, 'close'),
+            bg="#607D8B", fg="white",
+            font=("Arial", 10, "bold"),
+            relief=tk.RAISED, bd=3
+        )
+        self.gripper_close_btn.grid(row=2, column=6, rowspan=2, sticky='nsew', padx=(10, 0), pady=(4, 4))
         self.recover_btn = tk.Button(
             frame, text="Recover",
             command=self.on_recover,
@@ -872,9 +962,9 @@ class PandaGui:
             font=("Arial", 10, "bold"),
             relief=tk.RAISED, bd=3
         )
-        self.motions_btn.grid(row=first + 2, column=6, rowspan=2, sticky='nsew', padx=(10, 0), pady=(4, 0))
+        self.motions_btn.grid(row=first + 2, column=6, rowspan=3, sticky='nsew', padx=(10, 0), pady=(4, 0))
         # Rows spread over the height of the buttons on the left
-        for row in range(first + 4):
+        for row in range(first + 5):
             frame.rowconfigure(row, weight=1)
 
     def internal_selected(self):
@@ -1119,6 +1209,8 @@ class PandaGui:
             params.append(f"clamp:={str(controller_params['clamp'].get()).lower()}")
         if 'show_details' in controller_params:
             params.append(f"show_details:={str(controller_params['show_details'].get()).lower()}")
+        if 'use_gripper' in controller_params:
+            params.append(f"use_gripper:={str(controller_params['use_gripper'].get()).lower()}")
         if 'use_elbow_control' in controller_params:
             params.append(f"use_elbow_control:={str(controller_params['use_elbow_control'].get()).lower()}")
         if 'use_demo' in controller_params:
@@ -1146,7 +1238,7 @@ class PandaGui:
             # Numeric params, all doubles in the bridges
             float_params = ['safe_joint_speed_factor', 'safe_speed_factor', 'publish_freq', 'load',
                             'critical_height', 'command_timeout_ms', 'playout_delay_ms', 'stall_timeout_ms',
-                            'max_jump', 'safe_torque_factor', 'torque_rate_factor']
+                            'max_jump', 'safe_torque_factor', 'torque_rate_factor', 'gripper_force']
             for param_key in float_params:
                 if param_key in controller_params:
                     value = self.format_float_param(controller_params[param_key].get(), param_key)
@@ -1371,6 +1463,16 @@ class PandaGui:
         else:
             for key in ('robot', 'joints', 'pose'):
                 v[key].set("-")
+
+        # Franka Hand: connected while its state arrives
+        width, gripper_time, gripper_message = self.ros.gripper_snapshot()
+        gripper = running and width is not None and time.monotonic() - gripper_time < 1.0
+        if gripper:
+            v['gripper'].set(f"{width * 1e3:.1f} mm" + (f" | {gripper_message}" if gripper_message else ""))
+        else:
+            v['gripper'].set("not connected" if running and lifecycle in ('inactive', 'active') else "-")
+        for button in (self.gripper_open_btn, self.gripper_close_btn):
+            button.config(state=tk.NORMAL if gripper else tk.DISABLED)
 
         # Internal motions: active bridge in internal mode
         self.motions_btn.config(state=tk.NORMAL if self.internal_selected() else tk.DISABLED)
