@@ -167,6 +167,9 @@ The headers are in `include/panda_utils/bridge/`, the sources in `src/bridge/`.
 | `launch/gui.launch.py` | launches the GUI |
 | `launch/bridge.launch.py` | starts one bridge without the GUI, then configures and activates it |
 | `config/bridge.yaml` | parameters of the bridges for `bridge.launch.py`, with comments |
+| `launch/rviz.launch.py` | RViz in `/panda_view`: robot from `franka_description`, joints merged from `/joint_states` and `/panda/gripper_state` by a `joint_state_publisher`, and the optional scene by a second `robot_state_publisher` |
+| `config/panda.rviz` | default RViz configuration: robot, scene, grid; fixed frame `fer_link0` |
+| `config/scene_example.urdf.xacro` | example scene of the cell: a table and a part, rooted at `fer_link0` |
 | `src/panda_gui.cpp` | old Qt GUI, no longer used |
 
 ### Tests (`panda_utils/test/`)

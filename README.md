@@ -20,14 +20,15 @@ The code before this version is on the [`old`](https://github.com/gianmarcodipuo
 5. [Quick start](#quick-start)
 6. [The GUI](#the-gui)
 7. [Without the GUI](#without-the-gui)
-8. [Commanding the robot from your own program](#commanding-the-robot-from-your-own-program)
-9. [Internal motions: goals and presets](#internal-motions-goals-and-presets)
-10. [The Franka Hand](#the-franka-hand)
-11. [State, errors and recovery](#state-errors-and-recovery)
-12. [Parameters](#parameters)
-13. [Trying it without a robot](#trying-it-without-a-robot)
-14. [Robot tests](#robot-tests)
-15. [Automated tests](#automated-tests)
+8. [RViz](#rviz)
+9. [Commanding the robot from your own program](#commanding-the-robot-from-your-own-program)
+10. [Internal motions: goals and presets](#internal-motions-goals-and-presets)
+11. [The Franka Hand](#the-franka-hand)
+12. [State, errors and recovery](#state-errors-and-recovery)
+13. [Parameters](#parameters)
+14. [Trying it without a robot](#trying-it-without-a-robot)
+15. [Robot tests](#robot-tests)
+16. [Automated tests](#automated-tests)
 
 ## How it works
 
@@ -69,13 +70,15 @@ cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF ..
 cmake --build . -j4 && sudo cmake --install . && sudo ldconfig
 
 # 2. ROS, GUI and build dependencies
-sudo apt install -y ros-jazzy-ruckig ros-jazzy-realtime-tools python3-tk qtbase5-dev python3-colcon-common-extensions
+sudo apt install -y ros-jazzy-ruckig ros-jazzy-realtime-tools python3-tk qtbase5-dev python3-colcon-common-extensions \
+  ros-jazzy-robot-state-publisher ros-jazzy-joint-state-publisher ros-jazzy-xacro ros-jazzy-rviz2
 
-# 3. this repository, in ~/uclv_panda_ros2
+# 3. this repository, in ~/uclv_panda_ros2, with the robot model for RViz
 git clone https://github.com/gianmarcodipuorto/uclv_panda_ros2.git ~/uclv_panda_ros2
 cd ~/uclv_panda_ros2
+git clone --branch 2.4.0 https://github.com/frankarobotics/franka_description.git src/franka_description
 source /opt/ros/jazzy/setup.bash
-colcon build --packages-select uclv_panda_interfaces panda_utils --cmake-args -DCMAKE_BUILD_TYPE=Release
+colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release
 source install/setup.bash
 ```
 
@@ -164,7 +167,7 @@ Worth considering: the network card interrupts on the same CPU as the loop (`rt_
 | 1 | **Controller Actions** | starts the bridge and takes it through its states (table below) |
 | 2 | **Parameters** | parameters of the chosen bridge; they are locked while the bridge is running |
 | 3 | **Motion controller selection** | which bridge to start: joint bridges on the first row, Cartesian ones on the second |
-| 4 | **Bridge status** | state of the bridge, of the robot and of the Franka Hand, updated 5 times per second; **Recover** and **Internal motions** buttons |
+| 4 | **Bridge status** | state of the bridge, of the robot and of the Franka Hand, updated 5 times per second; **RViz**, **Scene...**, **Recover** and **Internal motions** buttons |
 | 5 | **Output Console** | the log of the GUI and of the bridge: errors in red, warnings in yellow |
 | 6 | **Franka Hand** | the commands of the hand: width, speed and force (empty = default of the bridge), **Open**, **Close**, **Move**, **Homing**, **Stop** |
 
@@ -177,6 +180,7 @@ The buttons are enabled only when the action is possible:
 | Activate | starts the 1 kHz control loop; the robot holds its position |
 | Deactivate | smooth stop, then the loop ends; the robot stays connected |
 | Stop Controller | Deactivate (if active), then closes the bridge |
+| RViz | opens RViz with the robot and, if chosen with **Scene...**, the scene of the cell (see [RViz](#rviz)); while RViz is open it closes it |
 | Franka Hand bar | **Open**, **Close** (with the force of the bar, or of the **Franka Hand, grasp force** parameter), **Move** to the width, **Homing**, **Stop**; in every bridge and mode, enabled while the hand is connected |
 
 If a step fails, for example Configure with the robot unreachable, an error pops up and the console says why.
@@ -237,6 +241,22 @@ ros2 launch panda_utils bridge.launch.py bridge:=joint_torques params_file:=/pat
 | `robot_ip`, `mode` | from the file | override the file |
 
 For your own parameters, copy `src/panda_utils/config/bridge.yaml`, change it and pass it with `params_file`: its comments explain how. Ctrl+C stops the robot smoothly, then the bridge exits. While a bridge runs this way the GUI cannot start another one: only one bridge at a time connects to the robot.
+
+## RViz
+
+**RViz**, in the status panel of the GUI, opens RViz at once with the robot and the Franka Hand as they move. The same button closes it, and closing the GUI closes it too. **Scene...**, under it, chooses the scene of the cell and the RViz configuration for the next opening (empty = only the robot and the default configuration). From a terminal:
+
+```bash
+ros2 launch panda_utils rviz.launch.py
+ros2 launch panda_utils rviz.launch.py scene:=~/my_cell.urdf.xacro rviz_config:=~/my.rviz
+```
+
+![RViz with the example scene](docs/images/rviz.png)
+
+- **The rest of the cell** (tables, fixtures, parts) goes in a xacro file, the scene, whose root link is `fer_link0`, the base of the robot: every object hangs from it with a fixed joint. Start from `src/panda_utils/config/scene_example.urdf.xacro`, which has a table, a part, a macro for boxes and how to use your meshes: copy it outside the workspace and change the copy. The objects also become TF frames with the names of their links.
+- **Your own displays** (markers, cameras, point clouds): add them in RViz and save with File → Save Config As; next time choose that file as RViz config.
+- RViz reads the driver only through `/joint_states` and `/panda/gripper_state`: its nodes live in `/panda_view` and publish nothing on the topics of the driver. Without a running bridge the robot is drawn with all its joints at zero.
+- It needs `franka_description` in the workspace (see [Installation](#installation)); without it, the GUI says so. The GUI finds it even if the terminal was set up before it was built.
 
 ## Commanding the robot from your own program
 
@@ -538,6 +558,7 @@ Always keep the user stop in your hand. For the internal tests, set `mode intern
 | 26 | any | | right after test 25, Close | the fingers close: CLOSE first frees them from the outer end stop |
 | 27 | any | | robot still, `ros2 topic echo --once /panda/robot_state` | `has_model` true; `gravity` close to `tau_j`, within a few Nm |
 | 28 | Joint Position | external | without the GUI: `ros2 launch panda_utils bridge.launch.py bridge:=joint_positions robot_ip:=<robot-ip>`, then `simple_joints_traj` | the bridge starts already active and follows the stream; Ctrl+C stops it |
+| 29 | any | | RViz from the GUI, then a motion and Close/Open of the hand | RViz follows the arm and the fingers |
 
 During each test, in `/panda/bridge_status`: `control_command_success_rate` close to 1, `last_error` empty (except in test 20), `missed_cycles` growing slowly, `stalls` at 0 when a stream ends by itself.
 
