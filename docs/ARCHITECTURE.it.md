@@ -18,11 +18,12 @@ client ──topic──▶ subscription ──coda lock-free──▶ loop 1 kH
 /joint_states, /panda/robot_state ◀── publisher ◀────┘  stato del loop, senza lock
 ```
 
-Ogni bridge usa tre thread:
+Ogni bridge usa questi thread:
 
 - **Thread robot.** Con il bridge attivo esegue `robot.control()`, che libfranka porta a SCHED_FIFO 99. Con il bridge inattivo legge lo stato con `readOnce()` a `publish_freq`.
 - **Thread publisher.** Pubblica stato e status a `publish_freq` e scrive nei log gli eventi del loop.
-- **Executor.** Un MultiThreadedExecutor con 4 thread: lifecycle, comandi, azioni e servizi, recovery.
+- **Executor.** Un MultiThreadedExecutor con 5 thread: lifecycle, comandi, azioni e servizi, recovery, pinza.
+- **Thread della pinza.** Con una Franka Hand: uno ne legge lo stato e lo pubblica, uno esegue i suoi comandi (vedi [La Franka Hand](#la-franka-hand)).
 
 Nel callback a 1 kHz non ci sono allocazioni, lock, log o chiamate ROS. Comandi e stato passano per code lock-free e box non bloccanti.
 
@@ -66,6 +67,18 @@ Se Ruckig non trova un profilo che arrivi all'accelerazione obiettivo (succede q
 - Un controllore esterno vede lo stato con qualche millisecondo di ritardo: con guadagni alti, soprattutto sugli ultimi giunti, il loop diventa instabile. Per una legge di controllo rigida usa la modalità internal.
 - Il preset `gravity_compensation` lascia il robot libero di essere mosso a mano, fino a `/panda/stop_motion`. Le soglie di collisione di default (20 Nm) possono far scattare un reflex se lo spingi con forza.
 
+## La Franka Hand
+
+`GripperServer` (in `gripper_server.hpp/.cpp`) appartiene a `BridgeBase`: viene creato al Configure, se `use_gripper` è true e la pinza risponde, e distrutto al Cleanup. Parla con `franka::Gripper`, che ha una connessione sua (porta TCP 1338 per i comandi, UDP per lo stato): niente di quello che fa tocca il loop di controllo.
+
+- In libfranka i comandi della pinza bloccano finché le dita si fermano. Girano in un thread worker, uno alla volta; il thread dell'executor del gruppo della pinza accetta solo i goal.
+- `franka::Gripper::stop()` chiamato da un altro thread fa lanciare "Command aborted" al comando in corso. Lo usano il goal nuovo e il cancel: il goal nuovo aspetta in coda, quello vecchio finisce abortito (preempted) o cancellato.
+- CLOSE senza larghezza è `grasp(0, speed, force, 0.005, 1.0)`: qualsiasi apertura finale vale come presa, quindi riesce sia su un oggetto sia a vuoto; il messaggio distingue i due casi (un'apertura sotto 2 mm vuol dire niente).
+- Il risultato legge l'apertura da un aggiornamento di stato arrivato dopo la fine del comando, quindi è quella finale.
+- Gli handle dei goal cambiano stato solo sotto un mutex, preso anche dal thread dello stato quando pubblica il feedback: il feedback non va mai a un goal appena finito.
+- Al Cleanup un comando in corso viene fermato; una presa già fatta non viene rilasciata.
+- `FakeGripperBackend` simula la pinza per `fake_robot`: dita che si muovono alla velocità comandata, e un oggetto facoltativo tra di esse (`fake_gripper_object_width`).
+
 ## Segnali e chiusura
 
 Il bridge non si interrompe mai di colpo per cause esterne:
@@ -90,6 +103,7 @@ Non c'è un file sorgente per ogni bridge: i bridge sono due famiglie di codice 
 | macchina a stati | `bridge/pipeline.hpp/.cpp` | comune a tutti |
 | come diventa un comando accettabile | `bridge/joint_tracker.hpp`, `joint_velocity_tracker.hpp`, `joint_torque_tracker.hpp`, `cartesian_tracker.hpp` | uno per bridge (i due cartesiani nello stesso file) |
 | connessione, thread, stato pubblicato | `bridge/bridge_base.hpp/.cpp` | comune a tutti |
+| Franka Hand | `bridge/gripper_server.hpp/.cpp`, `bridge/gripper_backend.hpp/.cpp` | comune a tutti |
 
 ## File
 
@@ -103,6 +117,7 @@ Non c'è un file sorgente per ogni bridge: i bridge sono due famiglie di codice 
 | `srv/RunPreset.srv` | avvio di un preset (nome, durata, ampiezza) |
 | `action/JointTraj.action` | goal di giunto: posizioni e durata |
 | `action/CartTraj.action` | goal cartesiano: posa, durata, gomito (NaN lo tiene) |
+| `action/Gripper.action` | comando della Franka Hand: apri, chiudi (presa), muovi, homing |
 
 ### `panda_utils`: codice dei bridge
 
@@ -114,9 +129,11 @@ Gli header sono in `include/panda_utils/bridge/`, i sorgenti in `src/bridge/`.
 | `franka_limits.hpp` | limiti del FER: di giunto, cartesiani e di coppia, dai valori di libfranka (`rate_limiting.h`) e da `robot_limits.hpp` |
 | `cartesian_types.hpp` | pose, quaternioni, conversioni da e verso `O_T_EE`, `CartesianState` e `CartesianFeedback` |
 | `robot_backend.hpp/.cpp` | interfaccia verso `franka::Robot` per i cinque tipi di comando; `FakeRobotBackend` è il robot simulato dei test |
+| `gripper_backend.hpp/.cpp` | interfaccia verso `franka::Gripper`; `FakeGripperBackend` è la pinza simulata dei test |
+| `gripper_server.hpp/.cpp` | la Franka Hand su `/panda/gripper` e `/panda/gripper_state`, per ogni bridge |
 | `rt_exchange.hpp` | code lock-free e box per passare dati tra il loop e ROS |
 | `state_conversions.hpp/.cpp` | da `franka::RobotState` ai messaggi; tabelle dello stato iniziale stampate al Configure |
-| `bridge_base.hpp/.cpp` | nodo lifecycle comune a tutti i bridge: connessione, thread, publisher, recovery |
+| `bridge_base.hpp/.cpp` | nodo lifecycle comune a tutti i bridge: connessione, thread, publisher, recovery, Franka Hand |
 | `bridge_main.hpp` | `main()` comune degli eseguibili: nodo ed executor |
 | `bridge_common.hpp` | parti ROS comuni ai bridge: snapshot del loop, eventi e log, statistiche dello stream, status, goal delle azioni |
 | `jitter_buffer.hpp` | campioni ordinati per stamp: fit quadratico locale (posizioni, pose, velocità) o interpolazione lineare (coppie) |
@@ -162,7 +179,7 @@ Gli header sono in `include/panda_utils/bridge/`, i sorgenti in `src/bridge/`.
 | `test_joint_velocity_pipeline.cpp` | stream di velocità (anche uno che finisce esattamente a fine quintica, e uno a gradini), stalli, moti internal che arrivano alla posizione |
 | `test_joint_torque_pipeline.cpp` | con un robot simulato: hold, stream con limiti e derivata, smorzamento, impedenza, gravity compensation |
 | `test_cartesian_pipeline.cpp` | stream di pose (anche con il segno del quaternione invertito, e a gradini) e di twist, stalli, salti, quota minima, goal, cerchio |
-| `test_bridges.cpp` | i cinque bridge completi sul robot simulato: cicli activate/deactivate, stream, goal e preset |
+| `test_bridges.cpp` | i cinque bridge completi sul robot simulato: cicli activate/deactivate, stream, goal e preset; la Franka Hand in ogni bridge e modalità: apertura, chiusura, presa, preemption, cancel, goal non validi |
 
 I test girano su un dominio ROS isolato (215-232, solo localhost), quindi non raggiungono mai un bridge collegato al robot.
 

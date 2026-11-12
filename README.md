@@ -21,11 +21,12 @@ The code before this version is on the [`old`](https://github.com/gianmarcodipuo
 6. [The GUI](#the-gui)
 7. [Commanding the robot from your own program](#commanding-the-robot-from-your-own-program)
 8. [Internal motions: goals and presets](#internal-motions-goals-and-presets)
-9. [State, errors and recovery](#state-errors-and-recovery)
-10. [Parameters](#parameters)
-11. [Trying it without a robot](#trying-it-without-a-robot)
-12. [Robot tests](#robot-tests)
-13. [Automated tests](#automated-tests)
+9. [The Franka Hand](#the-franka-hand)
+10. [State, errors and recovery](#state-errors-and-recovery)
+11. [Parameters](#parameters)
+12. [Trying it without a robot](#trying-it-without-a-robot)
+13. [Robot tests](#robot-tests)
+14. [Automated tests](#automated-tests)
 
 ## How it works
 
@@ -43,6 +44,8 @@ Each bridge has two modes, chosen with the `mode` parameter:
 
 - **`external`**: the robot follows the commands that another node publishes on the topic, as with a ros_control "forward" controller.
 - **`internal`**: the bridge generates the motion itself, towards a goal (action) or as a predefined motion (preset).
+
+In both modes the bridge also drives the Franka Hand, with the action `/panda/gripper`: see [The Franka Hand](#the-franka-hand).
 
 The bridge sends a command to the robot every millisecond, always: the client does not have to. It plays back the commands it receives according to their timestamps, adapts them to the robot's limits and, if the client stops publishing, stops the robot smoothly.
 
@@ -160,7 +163,7 @@ Worth considering: the network card interrupts on the same CPU as the loop (`rt_
 | 1 | **Controller Actions** | starts the bridge and takes it through its states (table below) |
 | 2 | **Parameters** | parameters of the chosen bridge; they are locked while the bridge is running |
 | 3 | **Motion controller selection** | which bridge to start: joint bridges on the first row, Cartesian ones on the second |
-| 4 | **Bridge status** | state of the bridge and of the robot, updated 5 times per second; **Recover** and **Internal motions** buttons |
+| 4 | **Bridge status** | state of the bridge, of the robot and of the Franka Hand, updated 5 times per second; **Open hand**, **Close hand**, **Recover** and **Internal motions** buttons |
 | 5 | **Output Console** | the log of the GUI and of the bridge: errors in red, warnings in yellow |
 
 The buttons are enabled only when the action is possible:
@@ -172,6 +175,7 @@ The buttons are enabled only when the action is possible:
 | Activate | starts the 1 kHz control loop; the robot holds its position |
 | Deactivate | smooth stop, then the loop ends; the robot stays connected |
 | Stop Controller | Deactivate (if active), then closes the bridge |
+| Open hand, Close hand | open the Franka Hand, or close it with the force of the **Franka Hand, grasp force** parameter, in every bridge and mode; enabled while the hand is connected |
 
 If a step fails, for example Configure with the robot unreachable, an error pops up and the console says why.
 
@@ -185,7 +189,8 @@ The screenshot at the top of the page shows the Joint Position bridge while it f
 - **Success rate**: the fraction of commands that reached the robot; it should stay close to 1;
 - **Commands Hz (max gap)**: the rate at which the client publishes, and the longest gap between two messages;
 - **Stalls**: how many times the stream broke off while the robot was moving, and the bridge stopped it;
-- **Limited cycles**: how many times the bridge had to correct a command that the robot would not have accepted.
+- **Limited cycles**: how many times the bridge had to correct a command that the robot would not have accepted;
+- **Franka Hand**: the opening of the fingers and the outcome of the last command, or `not connected`.
 
 ### Internal mode
 
@@ -312,6 +317,51 @@ ros2 service call /panda/stop_motion std_srvs/srv/Trigger
 
 A goal that would take the robot beyond its joint limits is rejected; one that is too fast is slowed down until it respects the limits.
 
+## The Franka Hand
+
+Every bridge drives the Franka Hand with the action `/panda/gripper`, from Configure to Cleanup: in both modes, with the arm still, moving or deactivated. The hand has a connection of its own, so its commands never slow down the 1 kHz loop of the arm. In the GUI: **Open hand** and **Close hand**.
+
+| `command` | What it does | Fields used |
+|---|---|---|
+| 0 `OPEN` | opens to the maximum width | `speed` |
+| 1 `CLOSE` | closes with `force` until the fingers stop on an object, or close fully | `force`, `speed`; `width` = width of the object, 0 = any |
+| 2 `MOVE` | moves the fingers to `width`, without force control | `width`, `speed` |
+| 3 `HOMING` | calibrates the maximum width: needed after changing the fingers | — |
+
+Fields left at 0 take the bridge parameters `gripper_speed` (0.1 m/s) and `gripper_force` (20 N, at most 70).
+
+```bash
+# open
+ros2 action send_goal /panda/gripper uclv_panda_interfaces/action/Gripper "{command: 0}"
+# close on whatever is between the fingers, with 40 N
+ros2 action send_goal /panda/gripper uclv_panda_interfaces/action/Gripper "{command: 1, force: 40.0}"
+# grasp an object 3 cm wide: fails if the fingers stop elsewhere (tolerance 5 mm)
+ros2 action send_goal /panda/gripper uclv_panda_interfaces/action/Gripper "{command: 1, width: 0.03}"
+# move the fingers to 4 cm
+ros2 action send_goal /panda/gripper uclv_panda_interfaces/action/Gripper "{command: 2, width: 0.04}"
+```
+
+The result has `success`, the final `width` (m) and a `message`, for example `holding an object 30.0 mm wide` or `closed: nothing between the fingers`. The feedback is the opening while the fingers move.
+
+- A new goal stops the running one, which ends as `preempted by a newer goal`: pressing Open hand while the hand closes opens it at once.
+- Canceling a goal stops the fingers where they are.
+- After a CLOSE the hand keeps holding. Closing the bridge does not open it.
+- If the maximum width is unknown (a hand never calibrated), OPEN, CLOSE and MOVE are rejected: run a HOMING.
+- The opening is published on `/panda/gripper_state` (`sensor_msgs/JointState`, `fer_finger_joint1` and `fer_finger_joint2`, half of the opening each), up to 50 times per second.
+- Without a hand, Configure prints a warning and the bridge works without `/panda/gripper`; with `use_gripper` set to false it does not even try.
+
+From Python:
+
+```python
+from rclpy.action import ActionClient
+from uclv_panda_interfaces.action import Gripper
+
+client = ActionClient(node, Gripper, '/panda/gripper')
+client.wait_for_server()
+goal = Gripper.Goal(command=Gripper.Goal.CLOSE, force=30.0)
+client.send_goal_async(goal)  # the result: success, width, message
+```
+
 ## State, errors and recovery
 
 From Configure on, every bridge publishes:
@@ -322,6 +372,7 @@ From Configure on, every bridge publishes:
 | `/panda/robot_state` | `uclv_panda_interfaces/PandaRobotState` | full state: `q`, `q_d`, velocities, torques, poses (`o_t_ee`, `o_t_ee_d`), external forces, robot mode and errors |
 | `/pose_state_read_ee` | `geometry_msgs/PoseStamped` | end-effector pose read from the robot |
 | `/pose_state_computed_ee` | `geometry_msgs/PoseStamped` | flange pose computed from the model |
+| `/panda/gripper_state` | `sensor_msgs/JointState` | opening of the Franka Hand: `fer_finger_joint1` and `fer_finger_joint2`, half of the opening each |
 | `/panda/bridge_status` | `uclv_panda_interfaces/BridgeStatus` | bridge state and diagnostics: the same fields as the GUI panel |
 
 ```bash
@@ -363,7 +414,10 @@ Common to all bridges:
 | `joint_impedance`, `cartesian_impedance` | as in the libfranka examples | impedances of the robot's internal controller |
 | `limit_rate`, `lpf_cutoff_frequency` | true, 100 | libfranka rate limiter and filter |
 | `rt_cpu`, `lock_memory`, `executor_rt_priority` | -1, false, 0 | real time: CPU dedicated to the loop, mlock, executor priority |
-| `fake_robot` | false | simulated robot, to try things without a robot |
+| `use_gripper` | true | connect to the Franka Hand and serve `/panda/gripper`; without a hand the bridge warns and works anyway |
+| `gripper_speed` | 0.1 | speed of the fingers (m/s) when a goal leaves it at 0 |
+| `gripper_force` | 20 | grasping force of CLOSE (N, at most 70) when a goal leaves it at 0 |
+| `fake_robot` | false | simulated robot and Franka Hand, to try things without a robot |
 
 Joint bridges:
 
@@ -399,6 +453,8 @@ ros2 run panda_utils panda_joint_positions_bridge --ros-args -p fake_robot:=true
 ros2 lifecycle set /panda_joint_positions_bridge configure
 ros2 lifecycle set /panda_joint_positions_bridge activate
 ```
+
+The simulated robot also has a simulated Franka Hand: `-p fake_gripper_object_width:=0.03` puts a 3 cm object between its fingers.
 
 The screenshots on this page were made this way.
 
@@ -437,6 +493,10 @@ Always keep the user stop in your hand. For the internal tests, set `mode intern
 | 19 | any | | Deactivate and Activate 10 times | every step succeeds |
 | 20 | any | | user stop pressed, released, then Recover | `error` and robot `user_stopped`; after Recover `holding` again |
 | 21 | any | | Ctrl+C in the GUI terminal with the bridge active | GUI and bridge exit in less than a second |
+| 22 | any | | Close hand, then Open hand, with nothing between the fingers | the fingers close fully (`closed: nothing between the fingers`), then open to the maximum width |
+| 23 | any | | an object between the fingers, then Close hand | `holding an object … mm wide`, with the width of the object; the hand holds it until Open hand |
+| 24 | Joint Position | external | Close hand and Open hand during `simple_joints_traj` | the stream goes on undisturbed: `stalls` 0, success rate close to 1 |
+| 25 | any | | `ros2 action send_goal /panda/gripper uclv_panda_interfaces/action/Gripper "{command: 3}"` | homing: the fingers close and open, the result gives the maximum width |
 
 During each test, in `/panda/bridge_status`: `control_command_success_rate` close to 1, `last_error` empty (except in test 20), `missed_cycles` growing slowly, `stalls` at 0 when a stream ends by itself.
 
@@ -449,4 +509,4 @@ cd ~/uclv_panda_ros2
 colcon test --packages-select uclv_panda_interfaces panda_utils && colcon test-result --verbose
 ```
 
-They must all pass: 90 gtests (pipeline, trackers and the five bridges on a simulated robot) plus the `lint_cmake` and `xmllint` linters.
+They must all pass: 97 gtests (pipeline, trackers, and the five bridges with the Franka Hand on a simulated robot) plus the `lint_cmake` and `xmllint` linters.

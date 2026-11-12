@@ -18,11 +18,12 @@ client ──topic──▶ subscription ──lock-free queue──▶ 1 kHz lo
 /joint_states, /panda/robot_state ◀── publisher ◀────┘  loop state, lock-free
 ```
 
-Each bridge uses three threads:
+Each bridge uses these threads:
 
 - **Robot thread.** With the bridge active it runs `robot.control()`, which libfranka raises to SCHED_FIFO 99. With the bridge inactive it reads the state with `readOnce()` at `publish_freq`.
 - **Publisher thread.** It publishes state and status at `publish_freq` and writes the loop events to the log.
-- **Executor.** A MultiThreadedExecutor with 4 threads: lifecycle, commands, actions and services, recovery.
+- **Executor.** A MultiThreadedExecutor with 5 threads: lifecycle, commands, actions and services, recovery, gripper.
+- **Gripper threads.** With a Franka Hand: one reads its state and publishes it, one runs its commands (see [The Franka Hand](#the-franka-hand)).
 
 The 1 kHz callback has no allocations, locks, logging or ROS calls. Commands and state go through lock-free queues and non-blocking boxes.
 
@@ -66,6 +67,18 @@ If Ruckig finds no profile that reaches the target acceleration (this happens wh
 - An external controller sees the state a few milliseconds late: with high gains, especially on the last joints, the loop becomes unstable. For a stiff control law use internal mode.
 - The `gravity_compensation` preset leaves the robot free to be moved by hand, until `/panda/stop_motion`. The default collision thresholds (20 Nm) can trigger a reflex if you push it hard.
 
+## The Franka Hand
+
+`GripperServer` (in `gripper_server.hpp/.cpp`) belongs to `BridgeBase`: it is created on Configure, if `use_gripper` is true and the hand answers, and destroyed on Cleanup. It talks to `franka::Gripper`, which has a connection of its own (TCP port 1338 for the commands, UDP for the state): nothing it does touches the control loop.
+
+- The gripper commands of libfranka block until the fingers stop. They run in a worker thread, one at a time; the executor thread of the gripper callback group only accepts the goals.
+- `franka::Gripper::stop()` called from another thread makes the running command throw "Command aborted". A new goal and a cancel use it: the new goal waits as pending, the old one ends as aborted (preempted) or canceled.
+- CLOSE without a width is `grasp(0, speed, force, 0.005, 1.0)`: any final opening counts as a grasp, so it succeeds both on an object and on nothing; the message tells the two apart (an opening below 2 mm means nothing).
+- The result reads the opening from a state update that arrived after the command ended, so it is the final one.
+- Goal handles change state only under one mutex, also taken by the state thread when it publishes the feedback: the feedback never goes to a goal that just ended.
+- On Cleanup a running command is stopped; a finished grasp is not released.
+- `FakeGripperBackend` simulates the hand for `fake_robot`: fingers moving at the commanded speed, and an optional object between them (`fake_gripper_object_width`).
+
 ## Signals and shutdown
 
 External causes never cut the bridge off abruptly:
@@ -90,6 +103,7 @@ There is no source file per bridge: the bridges are two families of shared code,
 | state machine | `bridge/pipeline.hpp/.cpp` | shared by all |
 | how a command becomes acceptable | `bridge/joint_tracker.hpp`, `joint_velocity_tracker.hpp`, `joint_torque_tracker.hpp`, `cartesian_tracker.hpp` | one per bridge (the two Cartesian ones in the same file) |
 | connection, threads, published state | `bridge/bridge_base.hpp/.cpp` | shared by all |
+| Franka Hand | `bridge/gripper_server.hpp/.cpp`, `bridge/gripper_backend.hpp/.cpp` | shared by all |
 
 ## Files
 
@@ -103,6 +117,7 @@ There is no source file per bridge: the bridges are two families of shared code,
 | `srv/RunPreset.srv` | starts a preset (name, duration, amplitude) |
 | `action/JointTraj.action` | joint goal: positions and duration |
 | `action/CartTraj.action` | Cartesian goal: pose, duration, elbow (NaN keeps it) |
+| `action/Gripper.action` | Franka Hand command: open, close (grasp), move, homing |
 
 ### `panda_utils`: bridge code
 
@@ -114,9 +129,11 @@ The headers are in `include/panda_utils/bridge/`, the sources in `src/bridge/`.
 | `franka_limits.hpp` | FER limits: joint, Cartesian and torque, from the libfranka values (`rate_limiting.h`) and from `robot_limits.hpp` |
 | `cartesian_types.hpp` | poses, quaternions, conversions to and from `O_T_EE`, `CartesianState` and `CartesianFeedback` |
 | `robot_backend.hpp/.cpp` | interface to `franka::Robot` for the five command types; `FakeRobotBackend` is the simulated robot of the tests |
+| `gripper_backend.hpp/.cpp` | interface to `franka::Gripper`; `FakeGripperBackend` is the simulated hand of the tests |
+| `gripper_server.hpp/.cpp` | the Franka Hand on `/panda/gripper` and `/panda/gripper_state`, for every bridge |
 | `rt_exchange.hpp` | lock-free queues and boxes to pass data between the loop and ROS |
 | `state_conversions.hpp/.cpp` | from `franka::RobotState` to the messages; tables of the initial state printed on Configure |
-| `bridge_base.hpp/.cpp` | lifecycle node shared by all bridges: connection, threads, publishers, recovery |
+| `bridge_base.hpp/.cpp` | lifecycle node shared by all bridges: connection, threads, publishers, recovery, Franka Hand |
 | `bridge_main.hpp` | shared `main()` of the executables: node and executor |
 | `bridge_common.hpp` | ROS parts shared by the bridges: loop snapshot, events and log, stream statistics, status, action goals |
 | `jitter_buffer.hpp` | samples sorted by stamp: local quadratic fit (positions, poses, velocities) or linear interpolation (torques) |
@@ -162,7 +179,7 @@ The headers are in `include/panda_utils/bridge/`, the sources in `src/bridge/`.
 | `test_joint_velocity_pipeline.cpp` | velocity streams (including one that ends exactly at the end of a quintic, and a staircase one), stalls, internal motions that reach the position |
 | `test_joint_torque_pipeline.cpp` | with a simulated robot: hold, streams with limits and derivative, damping, impedance, gravity compensation |
 | `test_cartesian_pipeline.cpp` | pose streams (including with the quaternion sign flipped, and staircase ones) and twist streams, stalls, jumps, minimum height, goals, circle |
-| `test_bridges.cpp` | the five complete bridges on the simulated robot: activate/deactivate cycles, streams, goals and presets |
+| `test_bridges.cpp` | the five complete bridges on the simulated robot: activate/deactivate cycles, streams, goals and presets; the Franka Hand in every bridge and mode: open, close, grasp, preemption, cancel, invalid goals |
 
 The tests run on an isolated ROS domain (215-232, localhost only), so they never reach a bridge connected to the robot.
 
