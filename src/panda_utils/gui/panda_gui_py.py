@@ -17,6 +17,7 @@ from rclpy.executors import SingleThreadedExecutor
 from rclpy.signals import SignalHandlerOptions
 from action_msgs.msg import GoalStatus
 from ament_index_python.packages import PackageNotFoundError, get_package_prefix
+from geometry_msgs.msg import TwistStamped
 from lifecycle_msgs.msg import Transition, TransitionEvent
 from lifecycle_msgs.srv import ChangeState, GetState
 from sensor_msgs.msg import JointState
@@ -29,6 +30,29 @@ from uclv_panda_interfaces.srv import RunPreset
 # Colors of the terminal (ANSI SGR codes in the log of the bridges), as tags of the console
 ANSI_SGR = re.compile(r'\x1b\[([0-9;]*)m')
 ANSI_COLORS = {'31': 'red', '91': 'red', '33': 'yellow', '93': 'yellow', '32': 'green', '92': 'green'}
+
+# Jog from the keyboard, with a velocity bridge in mode external. The GUI streams the velocity of the
+# keys held down, ramped so that the bridge can play it back as it is. When the stream ends (keys
+# released, window left, GUI stuck) the velocity goes to zero along the ramp; the bridge would stop
+# the robot by itself anyway, after stall_timeout_ms.
+JOG_BRIDGES = {'joint_velocity': 'joint', 'cartesian_velocity': 'cartesian'}
+JOG_RATE = 100.0  # Hz: samples of the stream
+JOG_RAMP = 0.3  # s: from rest to the speed of the slider, and back
+JOG_REST = 0.2  # s of zero velocity after a stop: the stream ends at rest, which the bridge does not count as a stall
+JOG_WATCHDOG = 0.2  # s: keys not refreshed by the Tk thread for longer count as released
+JOG_TICK_MS = 30  # Tk thread: keys read and sent to the ROS thread
+JOG_DEBOUNCE_MS = 40  # Autorepeat of X11: a release followed by a press within this time is not a release
+JOG_MAX_SPEED = {'joint': 0.5, 'linear': 0.15, 'angular': 0.5}  # rad/s, m/s, rad/s at 100 %
+# Key -> (axis, direction). Joints: 1-7 forward, the letters below them backwards.
+# Cartesian: vx vy vz (m/s), then wx wy wz (rad/s), in the base frame or in the EE frame
+JOG_KEYS = {
+    'joint': {**{str(i + 1): (i, 1.0) for i in range(7)}, **{key: (i, -1.0) for i, key in enumerate('qwertyu')}},
+    'cartesian': {'w': (0, 1.0), 's': (0, -1.0), 'a': (1, 1.0), 'd': (1, -1.0), 'r': (2, 1.0), 'f': (2, -1.0),
+                  'i': (3, 1.0), 'k': (3, -1.0), 'j': (4, 1.0), 'l': (4, -1.0), 'u': (5, 1.0), 'o': (5, -1.0)},
+}
+JOG_AXES = {'joint': [f'joint {i + 1}' for i in range(7)],
+            'cartesian': ['x', 'y', 'z', 'rot x', 'rot y', 'rot z']}
+JOINT_NAMES = [f'fer_joint{i + 1}' for i in range(7)]
 
 
 def matrix_to_quaternion(m):
@@ -79,6 +103,16 @@ class RosLink:
         self.recovery_client = node.create_client(Trigger, '/panda/error_recovery')
         self.joint_goals = ActionClient(node, JointTraj, '/panda/joint_traj')
         self.cart_goals = ActionClient(node, CartTraj, '/panda/cart_traj')
+        # Jog: the stream of the keys, published by a timer of this thread
+        self.joint_velocity_pub = node.create_publisher(JointState, '/panda/joint_velocity_command', 10)
+        self.twist_pub = node.create_publisher(TwistStamped, '/panda/cartesian_velocity_command', 10)
+        self.jog_request = None  # From the Tk thread: (kind, target, ee_frame, acceleration, time)
+        self.jog_kind = None
+        self.jog_velocity = None  # Velocity of the stream being published, None without a stream
+        self.jog_acceleration = None
+        self.jog_rest_since = None
+        self.jog_last = None
+        node.create_timer(1.0 / JOG_RATE, self._on_jog_timer)
         # Lifecycle interfaces of every bridge, created once: no entities change while spinning
         self.change_state = {}
         self.get_state = {}
@@ -303,6 +337,85 @@ class RosLink:
             self.time_left = None
         self.post('log', (f'{what} {outcome}', None if outcome == 'succeeded' else 'yellow'))
 
+    # --- jog ---
+
+    def set_jog(self, request):
+        """Tk thread, every JOG_TICK_MS while the jog window is open: the velocity the keys ask for.
+        request: (kind, target, ee_frame, acceleration), kind 'joint' (7 rad/s) or 'cartesian' (vx vy vz m/s,
+        wx wy wz rad/s, in the EE frame if ee_frame, else in the base frame), acceleration of the ramp for
+        each value; None to stop."""
+        with self.lock:
+            self.jog_request = None if request is None else (*request, time.monotonic())
+
+    def jog_streaming(self):
+        return self.jog_velocity is not None
+
+    def _on_jog_timer(self):
+        """Executor thread, at JOG_RATE: ramps the velocity of the stream to the one of the keys and publishes
+        it. Without a fresh request the target is zero: the stream ramps down, stays at zero for JOG_REST,
+        then ends with the robot at rest."""
+        now = time.monotonic()
+        dt = 1.0 / JOG_RATE if self.jog_last is None else min(now - self.jog_last, 3.0 / JOG_RATE)
+        self.jog_last = now
+        with self.lock:
+            request = self.jog_request
+            robot_state = self.robot_state
+        target = None
+        if request is not None and now - request[4] <= JOG_WATCHDOG:
+            kind, target, ee_frame, acceleration, _ = request
+            if kind != self.jog_kind:
+                # Another bridge, started after the previous one stopped: a new stream, from rest
+                self.jog_kind = kind
+                self.jog_velocity = None
+            self.jog_acceleration = acceleration
+            if kind == 'cartesian' and ee_frame:
+                target = self._ee_to_base(target, robot_state)
+        if self.jog_kind is None:
+            return
+        if target is None:
+            target = [0.0] * len(JOG_AXES[self.jog_kind])
+        if self.jog_velocity is None:
+            if not any(target):
+                return
+            self.jog_velocity = [0.0] * len(target)
+            self.jog_rest_since = None
+        steps = [a * dt for a in self.jog_acceleration]
+        self.jog_velocity = [v + max(-s, min(s, t - v)) for v, t, s in zip(self.jog_velocity, target, steps)]
+        if any(self.jog_velocity) or any(target):
+            self.jog_rest_since = None
+        elif self.jog_rest_since is None:
+            self.jog_rest_since = now
+        elif now - self.jog_rest_since > JOG_REST:
+            self.jog_velocity = None
+            return
+        self._publish_jog(self.jog_velocity)
+
+    @staticmethod
+    def _ee_to_base(twist, robot_state):
+        """Twist from the EE frame to the base frame, with the rotation of O_T_EE; None without the state"""
+        if robot_state is None:
+            return None
+        m = robot_state.o_t_ee  # Column-major
+        rotation = [[m[col * 4 + row] for col in range(3)] for row in range(3)]
+        return [sum(rotation[row][col] * twist[offset + col] for col in range(3))
+                for offset in (0, 3) for row in range(3)]
+
+    def _publish_jog(self, velocity):
+        stamp = self.node.get_clock().now().to_msg()
+        if self.jog_kind == 'joint':
+            msg = JointState()
+            msg.header.stamp = stamp
+            msg.name = JOINT_NAMES
+            msg.velocity = list(velocity)
+            self.joint_velocity_pub.publish(msg)
+        else:
+            msg = TwistStamped()
+            msg.header.stamp = stamp
+            msg.header.frame_id = 'fer_link0'
+            linear, angular = msg.twist.linear, msg.twist.angular
+            linear.x, linear.y, linear.z, angular.x, angular.y, angular.z = velocity
+            self.twist_pub.publish(msg)
+
 
 class BridgeProcess:
     """The bridge executable, started without a shell. It stays in the process group of the GUI,
@@ -422,6 +535,19 @@ class PandaGui:
         self.rviz_window = None
         self.rviz_scene_var = tk.StringVar()
         self.rviz_config_var = tk.StringVar()
+        # Jog from the keyboard: a window, for the velocity bridges in mode external
+        self.jog_window = None
+        self.jog_job = None
+        self.jog_speed = tk.IntVar(value=20)  # % of JOG_MAX_SPEED
+        self.jog_frame = tk.StringVar(value='base')
+        self.jog_pressed = {}  # keycode -> key, of the keys held down
+        self.jog_blocked = set()  # Keycodes held down at a stop (Space, Esc): ignored until released
+        self.jog_releases = {}  # keycode -> after id of a release not yet confirmed (autorepeat)
+        self.jog_key_labels = {}
+        self.jog_shown = None  # What the window shows, to update it only when it changes
+        self.jog_status_var = tk.StringVar()
+        self.jog_speed_text = tk.StringVar()
+        self.jog_hint_var = tk.StringVar()
 
         # Controller selection
         self.controller_var = tk.StringVar(value="joint_velocity")  # default
@@ -1037,7 +1163,16 @@ class PandaGui:
             font=("Arial", 10, "bold"),
             relief=tk.RAISED, bd=3
         )
-        self.motions_btn.grid(row=first + 2, column=6, rowspan=3, sticky='nsew', padx=(10, 0), pady=(4, 0))
+        self.motions_btn.grid(row=first + 2, column=6, rowspan=2, sticky='nsew', padx=(10, 0), pady=(4, 0))
+        # Jog from the keyboard, with the velocity bridges in mode external
+        self.jog_btn = tk.Button(
+            frame, text="Jog",
+            command=self.open_jog_window,
+            bg="#00897B", fg="white",
+            font=("Arial", 10, "bold"),
+            relief=tk.RAISED, bd=3
+        )
+        self.jog_btn.grid(row=first + 4, column=6, sticky='nsew', padx=(10, 0), pady=(4, 0))
         # Rows spread over the height of the buttons on the left
         for row in range(first + 5):
             frame.rowconfigure(row, weight=1)
@@ -1141,6 +1276,266 @@ class PandaGui:
             self.motions_window.title(f"Internal motions - {self.controller_descriptions[controller]}")
             self.preset_combo.config(values=presets)
             self.elbow_entry.config(state='normal' if cartesian else 'disabled')
+
+    # --- jog ---
+
+    def open_jog_window(self):
+        if self.jog_window is not None:
+            self.jog_window.lift()
+            self.jog_window.focus_force()
+            return
+        if self.current_controller not in JOG_BRIDGES:
+            return
+        window = tk.Toplevel(self.root)
+        window.configure(bg="#B8C8C9")
+        window.transient(self.root)
+        window.resizable(False, False)
+        window.protocol("WM_DELETE_WINDOW", self.close_jog_window)
+        # The keys reach the window wherever its focus is: none of its widgets takes the focus
+        window.bind('<KeyPress>', self.on_jog_key_press)
+        window.bind('<KeyRelease>', self.on_jog_key_release)
+        self.jog_window = window
+        self.setup_jog(window)
+        # Over the top of the console, on its right, like the internal motions window
+        window.update_idletasks()
+        x = self.output_frame.winfo_rootx() + self.output_frame.winfo_width() - window.winfo_reqwidth()
+        window.geometry(f"+{max(x, self.root.winfo_rootx())}+{self.output_frame.winfo_rooty()}")
+        window.focus_force()
+        self.jog_tick()
+
+    def close_jog_window(self):
+        if self.jog_window is None:
+            return
+        if self.jog_job is not None:
+            self.root.after_cancel(self.jog_job)
+            self.jog_job = None
+        self.jog_release_all()
+        self.ros.set_jog(None)
+        self.jog_window.destroy()
+        self.jog_window = None
+
+    def sync_jog_window(self):
+        """The jog window follows the selected bridge: rebuilt for the other velocity bridge, closed otherwise"""
+        if self.jog_window is None:
+            return
+        self.close_jog_window()
+        if self.current_controller in JOG_BRIDGES:
+            self.open_jog_window()
+
+    def setup_jog(self, window):
+        """Jog: state, speed, frame (Cartesian), the keys"""
+        kind = JOG_BRIDGES[self.current_controller]
+        window.title(f"Jog - {self.controller_descriptions[self.current_controller]}")
+        frame = ttk.Frame(window, padding=12, style="Custom.TFrame")
+        frame.pack(fill=tk.BOTH, expand=True)
+        frame.columnconfigure(1, weight=1)
+        self.jog_shown = None
+
+        # ROW 1: whether the keys move the robot, and if not why
+        self.jog_status_label = tk.Label(frame, textvariable=self.jog_status_var, font=("Arial", 11, "bold"),
+                                         fg="white", bg="#9E9E9E", pady=6)
+        self.jog_status_label.grid(row=0, column=0, columnspan=3, sticky='ew')
+
+        # ROW 2: speed, as a fraction of JOG_MAX_SPEED
+        ttk.Label(frame, text="Speed %", font=("Arial", 9, "bold"), style="Custom.TLabel").grid(
+            row=1, column=0, sticky='w', pady=(10, 0))
+        tk.Scale(frame, from_=1, to=100, orient=tk.HORIZONTAL, variable=self.jog_speed, takefocus=0,
+                 bg="#B8C8C9", highlightthickness=0, length=200,
+                 command=lambda _: self.update_jog_speed_text()).grid(row=1, column=1, sticky='ew', padx=(8, 8))
+        ttk.Label(frame, textvariable=self.jog_speed_text, width=22, style="Custom.TLabel").grid(
+            row=1, column=2, sticky='w', pady=(10, 0))
+        self.update_jog_speed_text()
+
+        # ROW 3: frame of the Cartesian velocity
+        if kind == 'cartesian':
+            ttk.Label(frame, text="Frame", font=("Arial", 9, "bold"), style="Custom.TLabel").grid(
+                row=2, column=0, sticky='w', pady=(4, 0))
+            frames = ttk.Frame(frame, style="Custom.TFrame")
+            frames.grid(row=2, column=1, columnspan=2, sticky='w', padx=(8, 0), pady=(4, 0))
+            for text, value in (("Base (fer_link0)", 'base'), ("End effector", 'ee')):
+                tk.Radiobutton(frames, text=text, variable=self.jog_frame, value=value, takefocus=0,
+                               bg="#B8C8C9", activebackground="#B8C8C9", highlightthickness=0,
+                               font=("Arial", 10)).pack(side=tk.LEFT, padx=(0, 12))
+
+        # ROW 4: the keys, lit while held down
+        keys = ttk.Frame(frame, style="Custom.TFrame")
+        keys.grid(row=3, column=0, columnspan=3, pady=(12, 0))
+        self.jog_key_labels = {}
+
+        def key_label(key, row, column):
+            label = tk.Label(keys, text=key.upper(), width=3, relief=tk.RAISED, bd=2, bg="#f8f8f8",
+                             font=("Consolas", 11, "bold"))
+            label.grid(row=row, column=column, padx=2, pady=2)
+            self.jog_key_labels[key] = label
+
+        by_axis = {}
+        for key, (axis, sign) in JOG_KEYS[kind].items():
+            by_axis[(axis, sign)] = key
+        small = dict(font=("Arial", 9, "bold"), style="Custom.TLabel")
+        if kind == 'joint':
+            # One column per joint: + above, - below
+            ttk.Label(keys, text="+", **small).grid(row=1, column=0, padx=(0, 6))
+            ttk.Label(keys, text="−", **small).grid(row=2, column=0, padx=(0, 6))
+            for axis in range(7):
+                ttk.Label(keys, text=str(axis + 1), **small).grid(row=0, column=axis + 1)
+                key_label(by_axis[(axis, 1.0)], 1, axis + 1)
+                key_label(by_axis[(axis, -1.0)], 2, axis + 1)
+        else:
+            # Translations on the left, rotations on the right: one row per axis, + and -
+            for side, first_axis in enumerate((0, 3)):
+                column = 4 * side
+                ttk.Label(keys, text="+", **small).grid(row=0, column=column + 1)
+                ttk.Label(keys, text="−", **small).grid(row=0, column=column + 2)
+                for row, axis in enumerate(range(first_axis, first_axis + 3)):
+                    ttk.Label(keys, text=JOG_AXES[kind][axis], **small).grid(
+                        row=row + 1, column=column, sticky='e', padx=(24 if side else 0, 6))
+                    key_label(by_axis[(axis, 1.0)], row + 1, column + 1)
+                    key_label(by_axis[(axis, -1.0)], row + 1, column + 2)
+
+        # ROW 5: how the robot stops, and what the bridge needs
+        ttk.Label(frame, text="Hold a key to move. The robot stops when you release it, press Space or Esc, "
+                              "or leave this window.", wraplength=420, font=("Arial", 9, "italic"),
+                  style="Custom.TLabel").grid(row=4, column=0, columnspan=3, sticky='w', pady=(12, 0))
+        ttk.Label(frame, textvariable=self.jog_hint_var, wraplength=420, foreground="#b71c1c",
+                  style="Custom.TLabel").grid(row=5, column=0, columnspan=3, sticky='w', pady=(4, 0))
+
+    def jog_speeds(self, kind):
+        """Speed of each axis at the slider"""
+        fraction = self.jog_speed.get() / 100.0
+        if kind == 'joint':
+            return [fraction * JOG_MAX_SPEED['joint']] * 7
+        return [fraction * JOG_MAX_SPEED['linear']] * 3 + [fraction * JOG_MAX_SPEED['angular']] * 3
+
+    def update_jog_speed_text(self):
+        kind = JOG_BRIDGES.get(self.current_controller)
+        if kind is None:
+            return
+        speeds = self.jog_speeds(kind)
+        self.jog_speed_text.set(f"{speeds[0]:.2f} rad/s" if kind == 'joint'
+                                else f"{speeds[0] * 100:.1f} cm/s, {speeds[3]:.2f} rad/s")
+
+    def jog_blocker(self):
+        """Why the keys cannot move the robot now; '' when they can"""
+        if self.current_controller not in JOG_BRIDGES:
+            return "select Joint Velocity or Cartesian Velocity"
+        if self.internal_selected():
+            return "set Mode to external"
+        lifecycle, status, status_time, robot_state, _ = self.ros.snapshot()
+        if not self.process.running() or self.stopping or lifecycle != 'active':
+            return "activate the bridge"
+        if status is None or time.monotonic() - status_time > 1.0:
+            return "no status from the bridge"
+        if status.mode != 'external':
+            return "the bridge is not in mode external"
+        if status.state in ('idle', 'error'):
+            return "the control loop is not running: see the log"
+        if robot_state is None or robot_state.robot_mode != 'move':
+            return f"robot in mode {robot_state.robot_mode if robot_state else '-'}"
+        return ''
+
+    def jog_focused(self):
+        """Whether the keyboard focus is in the jog window"""
+        try:
+            focus = str(self.root.tk.call('focus'))
+        except tk.TclError:
+            return False
+        window = str(self.jog_window)
+        return focus == window or focus.startswith(window + '.')
+
+    def jog_hint(self):
+        """The jog publishes at JOG_RATE: the playout delay of the bridge should cover the period"""
+        needed = 1000.0 / JOG_RATE + 5.0
+        try:
+            playout = float(self.params['playout_delay_ms'].get())
+        except (KeyError, ValueError):
+            return ''
+        if playout >= needed:
+            return ''
+        return (f"The jog publishes at {JOG_RATE:.0f} Hz: start the bridge with Playout delay ms {needed:.0f} "
+                f"(now {playout:g}) for a smoother motion.")
+
+    def jog_tick(self):
+        """Tk thread, every JOG_TICK_MS while the jog window is open: the velocity of the keys held down to
+        the ROS thread, and the state of the window"""
+        self.jog_job = None
+        if self.jog_window is None:
+            return
+        kind = JOG_BRIDGES.get(self.current_controller)
+        blocker = self.jog_blocker()
+        focused = self.jog_focused()
+        if blocker or not focused:
+            self.jog_release_all()
+        request = None
+        if kind is not None and not blocker and focused:
+            speeds = self.jog_speeds(kind)
+            target = [0.0] * len(speeds)
+            for key in self.jog_pressed.values():
+                axis, sign = JOG_KEYS[kind][key]
+                target[axis] += sign * speeds[axis]  # + and - of the same axis together cancel
+            request = (kind, target, self.jog_frame.get() == 'ee', [s / JOG_RAMP for s in speeds])
+        self.ros.set_jog(request)
+
+        # The window, only where it changed
+        if blocker:
+            status = (f"Disabled: {blocker}", "#9E9E9E")
+        elif not focused:
+            status = ("Click here to use the keys", "#EF6C00")
+        elif self.jog_pressed or self.ros.jog_streaming():
+            status = ("Moving", "#1565C0")
+        else:
+            status = ("Ready: hold a key to move", "#2E7D32")
+        shown = (status, frozenset(self.jog_pressed.values()), self.jog_hint())
+        if shown != self.jog_shown:
+            self.jog_shown = shown
+            self.jog_status_var.set(status[0])
+            self.jog_status_label.config(bg=status[1])
+            for key, label in self.jog_key_labels.items():
+                held = key in shown[1]
+                label.config(bg="#4CAF50" if held else "#f8f8f8", fg="white" if held else "black",
+                             relief=tk.SUNKEN if held else tk.RAISED)
+            self.jog_hint_var.set(shown[2])
+        self.jog_job = self.root.after(JOG_TICK_MS, self.jog_tick)
+
+    def on_jog_key_press(self, event):
+        key = event.keysym.lower()
+        if key in ('space', 'escape'):
+            # Stop: the keys held down now count only after a new press
+            self.jog_blocked.update(self.jog_pressed)
+            self.jog_pressed.clear()
+            return 'break'
+        kind = JOG_BRIDGES.get(self.current_controller)
+        if kind is None or key not in JOG_KEYS[kind]:
+            return None
+        # The keycode, not the key: the release of a key pressed before Shift has another keysym
+        job = self.jog_releases.pop(event.keycode, None)
+        if job is not None:
+            self.root.after_cancel(job)  # Autorepeat: still held down
+        if event.keycode not in self.jog_blocked:
+            self.jog_pressed[event.keycode] = key
+        return 'break'
+
+    def on_jog_key_release(self, event):
+        code = event.keycode
+        if code not in self.jog_pressed and code not in self.jog_blocked:
+            return
+        # Autorepeat sends a release and a press for every repetition: a release counts after a short
+        # time without a press
+        job = self.jog_releases.pop(code, None)
+        if job is not None:
+            self.root.after_cancel(job)
+        self.jog_releases[code] = self.root.after(JOG_DEBOUNCE_MS, lambda: self.on_jog_key_up(code))
+
+    def on_jog_key_up(self, code):
+        self.jog_releases.pop(code, None)
+        self.jog_pressed.pop(code, None)
+        self.jog_blocked.discard(code)
+
+    def jog_release_all(self):
+        for job in self.jog_releases.values():
+            self.root.after_cancel(job)
+        self.jog_releases.clear()
+        self.jog_pressed.clear()
+        self.jog_blocked.clear()
 
     def setup_output(self, parent):
         # Console and Franka Hand bar, together as high as the parameters and the controller selection
@@ -1246,6 +1641,7 @@ class PandaGui:
         self.build_params_ui()
         self.update_motion_panel(clear_goal=True)
         self.sync_motions_window()
+        self.sync_jog_window()
 
         self.log(f"Selected: {self.controller_descriptions[new_controller]}")
 
@@ -1612,6 +2008,9 @@ class PandaGui:
                 button.config(state=tk.NORMAL if internal else tk.DISABLED)
             self.current_btn.config(state=tk.NORMAL if robot_state is not None and running else tk.DISABLED)
         self.time_left_var.set(f"{time_left:.1f} s left" if time_left is not None else "")
+        # Jog: velocity bridges in mode external
+        self.jog_btn.config(state=tk.NORMAL if self.current_controller in JOG_BRIDGES and not self.internal_selected()
+                            else tk.DISABLED)
         # Recovery: after an error of the control loop, or a reflex of the robot
         needs_recovery = (fresh and status.state == 'error') or (
             robot_state is not None and robot_state.robot_mode in ('reflex', 'user_stopped'))
@@ -1714,6 +2113,7 @@ class PandaGui:
         if self.closing:
             return
         self.closing = True
+        self.close_jog_window()
         if self.rviz.running():
             self.rviz.stop()
         if self.process.running():
