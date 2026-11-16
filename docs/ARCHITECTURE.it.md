@@ -163,7 +163,7 @@ Gli header sono in `include/panda_utils/bridge/`, i sorgenti in `src/bridge/`.
 | `examples/joint_position_client.py` | esempio minimo di client Python, a 100 Hz |
 | `include/panda_utils/robot_limits.hpp` | limiti del Panda, senza dipendenze ROS |
 | `include/panda_utils/constants.hpp`, `utils_func.hpp` | nomi, QoS e funzioni geometriche comuni |
-| `gui/panda_gui_py.py` | la GUI (Tkinter + rclpy) |
+| `gui/panda_gui_py.py` | la GUI (Tkinter + rclpy); il jog da tastiera pubblica i suoi stream da un timer del thread ROS |
 | `launch/gui.launch.py` | lancia la GUI |
 | `launch/bridge.launch.py` | avvia un bridge senza GUI, poi lo configura e lo attiva |
 | `config/bridge.yaml` | parametri dei bridge per `bridge.launch.py`, con i commenti |

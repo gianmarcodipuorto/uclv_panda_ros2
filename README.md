@@ -155,7 +155,7 @@ Worth considering: the network card interrupts on the same CPU as the loop (`rt_
    source ~/uclv_panda_ros2/install/setup.bash
    ros2 run panda_utils simple_joints_traj   # the 7 joints decrease by 0.2 rad in 2 s
    ```
-   In `internal` mode the **Internal motions** window opens, where you start a preset or a goal.
+   In `internal` mode the **Internal motions** window opens, where you start a preset or a goal. With **Joint Velocity** or **Cartesian Velocity** in `external` mode you can also move it from the keyboard, with **Jog** (see [Keyboard jog](#keyboard-jog)).
 7. When you are done, press **Stop Controller** or close the window: the robot stops smoothly and the bridge exits.
 
 ## The GUI
@@ -167,7 +167,7 @@ Worth considering: the network card interrupts on the same CPU as the loop (`rt_
 | 1 | **Controller Actions** | starts the bridge and takes it through its states (table below) |
 | 2 | **Parameters** | parameters of the chosen bridge; they are locked while the bridge is running |
 | 3 | **Motion controller selection** | which bridge to start: joint bridges on the first row, Cartesian ones on the second |
-| 4 | **Bridge status** | state of the bridge, of the robot and of the Franka Hand, updated 5 times per second; **RViz**, **Scene...**, **Recover** and **Internal motions** buttons |
+| 4 | **Bridge status** | state of the bridge, of the robot and of the Franka Hand, updated 5 times per second; **RViz**, **Scene...**, **Recover**, **Internal motions** and **Jog** buttons |
 | 5 | **Output Console** | the log of the GUI and of the bridge: errors in red, warnings in yellow |
 | 6 | **Franka Hand** | the commands of the hand: width, speed and force (empty = default of the bridge), **Open**, **Close**, **Move**, **Homing**, **Stop** |
 
@@ -181,6 +181,7 @@ The buttons are enabled only when the action is possible:
 | Deactivate | smooth stop, then the loop ends; the robot stays connected |
 | Stop Controller | Deactivate (if active), then closes the bridge |
 | RViz | opens RViz with the robot and, if chosen with **Scene...**, the scene of the cell (see [RViz](#rviz)); while RViz is open it closes it |
+| Jog | opens the window to move the robot from the keyboard, with Joint Velocity or Cartesian Velocity in `external` mode (see [Keyboard jog](#keyboard-jog)) |
 | Franka Hand bar | **Open**, **Close** (with the force of the bar, or of the **Franka Hand, grasp force** parameter), **Move** to the width, **Homing**, **Stop**; in every bridge and mode, enabled while the hand is connected |
 
 If a step fails, for example Configure with the robot unreachable, an error pops up and the console says why.
@@ -214,6 +215,24 @@ Choosing **Mode** `internal` opens the **Internal motions** window. If you close
 | joint | `quintic_joint1` (joint 1 forward by 0.2 rad in 10 s), `sine_joint1` (joint 1 back and forth) | 7 joint positions |
 | Joint Torque | the same, plus `gravity_compensation` (you move the robot by hand) | 7 joint positions, tracked in impedance |
 | Cartesian | `line_x` (10 cm along x and back), `circle_xy` (5 cm circle in the horizontal plane) | pose `x,y,z,qx,qy,qz,qw` in the base frame |
+
+### Keyboard jog
+
+![The Jog window](docs/images/gui_jog.png)
+
+With **Joint Velocity** or **Cartesian Velocity** in `external` mode, the **Jog** button opens a window from which you move the robot with the keyboard. The keys work while the bridge is active and the window has the focus: the line at the top says whether the jog is ready and, if not, why. While you hold a key down, it lights up green in the window.
+
+| Bridge | Keys |
+|---|---|
+| Joint Velocity | `1` to `7` move joints 1 to 7 forward; the keys of the row below, `Q W E R T Y U`, move them backwards |
+| Cartesian Velocity | `W`/`S` ±x, `A`/`D` ±y, `R`/`F` ±z; `I`/`K`, `J`/`L`, `U`/`O` rotations about x, y, z |
+
+- **Speed %**: the speed, as a percentage of 0.5 rad/s for the joints, and of 15 cm/s and 0.5 rad/s for the end effector. The default is 20 %.
+- **Frame** (Cartesian only): the axes of the keys are those of the base (`fer_link0`) or those of the end effector. Rotations are always about the end effector, which stays where it is.
+- Several keys together add up their motions.
+- The robot stops when you release the keys, press Space or Esc, or the window loses the focus. After Space, a key still held down counts only once you release it and press it again.
+
+The GUI publishes on the topic of the bridge, at 100 Hz, the velocity of the keys held down, with a ramp of 0.3 s when starting and stopping; the bridge limits it like any other stream. If the GUI gets stuck, after 0.2 s the velocity goes back to zero along the ramp; in any case the bridge stops the robot after `stall_timeout_ms` without commands. At 100 Hz, **Playout delay ms** 15 is better (see [The rules](#the-rules)): with the default of 5 ms the bridge extrapolates between samples, and the window says so.
 
 ### Errors and Recover
 
@@ -559,6 +578,9 @@ Always keep the user stop in your hand. For the internal tests, set `mode intern
 | 27 | any | | robot still, `ros2 topic echo --once /panda/robot_state` | `has_model` true; `gravity` close to `tau_j`, within a few Nm |
 | 28 | Joint Position | external | without the GUI: `ros2 launch panda_utils bridge.launch.py bridge:=joint_positions robot_ip:=<robot-ip>`, then `simple_joints_traj` | the bridge starts already active and follows the stream; Ctrl+C stops it |
 | 29 | any | | RViz from the GUI, then a motion and Close/Open of the hand | RViz follows the arm and the fingers |
+| 30 | Joint Velocity | external | Jog, Playout delay ms 15: hold `1` for 2 s, then `Q` | joint 1 moves forward by about 0.2 rad (Speed 20 %) and back; it stops on release; `stalls` 0 |
+| 31 | Cartesian Velocity | external | Jog, Playout delay ms 15: `W`, `R`, then `U` with Frame End effector | +x and +z by a few cm; the rotation about the z axis of the end effector leaves it where it is |
+| 32 | Joint Velocity or Cartesian Velocity | external | Jog: hold a key and click on the main window, then press Space with a key held down | in both cases the robot stops smoothly and holds its position |
 
 During each test, in `/panda/bridge_status`: `control_command_success_rate` close to 1, `last_error` empty (except in test 20), `missed_cycles` growing slowly, `stalls` at 0 when a stream ends by itself.
 

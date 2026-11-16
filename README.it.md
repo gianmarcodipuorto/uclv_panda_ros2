@@ -155,7 +155,7 @@ Da valutare: gli interrupt della scheda di rete sulla stessa CPU del loop (`rt_c
    source ~/uclv_panda_ros2/install/setup.bash
    ros2 run panda_utils simple_joints_traj   # i 7 giunti scendono di 0.2 rad in 2 s
    ```
-   In modalità `internal` si apre la finestra **Internal motions**, da cui lanci un preset o un goal.
+   In modalità `internal` si apre la finestra **Internal motions**, da cui lanci un preset o un goal. Con **Joint Velocity** o **Cartesian Velocity** in `external` puoi anche muoverlo da tastiera, con **Jog** (vedi [Jog da tastiera](#jog-da-tastiera)).
 7. Alla fine premi **Stop Controller**, oppure chiudi la finestra: il robot si ferma dolcemente e il bridge esce.
 
 ## La GUI
@@ -167,7 +167,7 @@ Da valutare: gli interrupt della scheda di rete sulla stessa CPU del loop (`rt_c
 | 1 | **Controller Actions** | avvia il bridge e lo porta attraverso i suoi stati (tabella sotto) |
 | 2 | **Parameters** | parametri del bridge scelto; si bloccano mentre il bridge è in esecuzione |
 | 3 | **Motion controller selection** | quale bridge avviare: giunti sulla prima riga, cartesiani sulla seconda |
-| 4 | **Bridge status** | stato del bridge, del robot e della Franka Hand, aggiornato 5 volte al secondo; pulsanti **RViz**, **Scene...**, **Recover** e **Internal motions** |
+| 4 | **Bridge status** | stato del bridge, del robot e della Franka Hand, aggiornato 5 volte al secondo; pulsanti **RViz**, **Scene...**, **Recover**, **Internal motions** e **Jog** |
 | 5 | **Output Console** | il log della GUI e del bridge: errori in rosso, avvisi in giallo |
 | 6 | **Franka Hand** | i comandi della pinza: larghezza, velocità e forza (vuoti = default del bridge), **Open**, **Close**, **Move**, **Homing**, **Stop** |
 
@@ -181,6 +181,7 @@ I pulsanti si abilitano solo quando l'azione è possibile:
 | Deactivate | fermata dolce, poi il loop si chiude; il robot resta connesso |
 | Stop Controller | Deactivate (se attivo), poi chiude il bridge |
 | RViz | apre RViz con il robot e, se scelta con **Scene...**, la scena della cella (vedi [RViz](#rviz)); con RViz aperto lo chiude |
+| Jog | apre la finestra per muovere il robot da tastiera, con Joint Velocity o Cartesian Velocity in modalità `external` (vedi [Jog da tastiera](#jog-da-tastiera)) |
 | barra Franka Hand | **Open**, **Close** (con la forza della barra, o del parametro **Franka Hand, grasp force**), **Move** alla larghezza, **Homing**, **Stop**; in ogni bridge e modalità, attivi mentre la pinza è collegata |
 
 Se un passo fallisce, per esempio Configure con il robot non raggiungibile, compare un errore e la console dice perché.
@@ -214,6 +215,24 @@ Scegliendo **Mode** `internal` si apre la finestra **Internal motions**. Se la c
 | di giunto | `quintic_joint1` (giunto 1 avanti di 0.2 rad in 10 s), `sine_joint1` (giunto 1 avanti e indietro) | 7 posizioni di giunto |
 | Joint Torque | gli stessi, più `gravity_compensation` (il robot si muove a mano) | 7 posizioni di giunto, inseguite in impedenza |
 | cartesiani | `line_x` (10 cm lungo x e ritorno), `circle_xy` (cerchio di 5 cm nel piano orizzontale) | posa `x,y,z,qx,qy,qz,qw` nel frame base |
+
+### Jog da tastiera
+
+![La finestra Jog](docs/images/gui_jog.png)
+
+Con **Joint Velocity** o **Cartesian Velocity** in modalità `external`, il pulsante **Jog** apre una finestra da cui muovi il robot da tastiera. I tasti funzionano quando il bridge è attivo e la finestra ha il focus: la riga in alto dice se il jog è pronto e, se non lo è, perché. Mentre tieni premuto un tasto, nella finestra si accende in verde.
+
+| Bridge | Tasti |
+|---|---|
+| Joint Velocity | da `1` a `7` muovono in avanti i giunti da 1 a 7; i tasti della riga sotto, `Q W E R T Y U`, li muovono indietro |
+| Cartesian Velocity | `W`/`S` ±x, `A`/`D` ±y, `R`/`F` ±z; `I`/`K`, `J`/`L`, `U`/`O` rotazioni attorno a x, y, z |
+
+- **Speed %**: la velocità, in percentuale di 0.5 rad/s per i giunti, e di 15 cm/s e 0.5 rad/s per l'end effector. Il default è 20 %.
+- **Frame** (solo cartesiano): gli assi dei tasti sono quelli della base (`fer_link0`) o quelli dell'end effector. Le rotazioni sono sempre attorno all'end effector, che resta fermo.
+- Più tasti insieme sommano i loro moti.
+- Il robot si ferma quando rilasci i tasti, premi Spazio o Esc, o la finestra perde il focus. Dopo Spazio, un tasto rimasto premuto conta solo quando lo rilasci e lo premi di nuovo.
+
+La GUI pubblica sul topic del bridge, a 100 Hz, la velocità dei tasti premuti, con una rampa di 0.3 s all'avvio e all'arresto; il bridge la limita come qualsiasi altro stream. Se la GUI si blocca, dopo 0.2 s la velocità torna a zero lungo la rampa; in ogni caso il bridge ferma il robot dopo `stall_timeout_ms` senza comandi. A 100 Hz conviene **Playout delay ms** 15 (vedi [Le regole](#le-regole)): con il default di 5 ms il bridge estrapola tra un campione e l'altro, e la finestra lo segnala.
 
 ### Errori e Recover
 
@@ -559,6 +578,9 @@ Tieni sempre lo user stop in mano. Per le prove internal imposta `mode internal`
 | 27 | uno qualsiasi | | robot fermo, `ros2 topic echo --once /panda/robot_state` | `has_model` true; `gravity` vicino a `tau_j`, entro pochi Nm |
 | 28 | Joint Position | external | senza GUI: `ros2 launch panda_utils bridge.launch.py bridge:=joint_positions robot_ip:=<ip-del-robot>`, poi `simple_joints_traj` | il bridge parte già attivo e segue lo stream; Ctrl+C lo ferma |
 | 29 | uno qualsiasi | | RViz dalla GUI, poi un moto e Close/Open della pinza | RViz segue il braccio e le dita |
+| 30 | Joint Velocity | external | Jog, Playout delay ms 15: tieni premuto `1` per 2 s, poi `Q` | il giunto 1 avanza di circa 0.2 rad (Speed 20 %) e torna; si ferma al rilascio; `stalls` 0 |
+| 31 | Cartesian Velocity | external | Jog, Playout delay ms 15: `W`, `R`, poi `U` con Frame End effector | +x e +z di qualche cm; la rotazione attorno all'asse z dell'end effector lo lascia dov'è |
+| 32 | Joint Velocity o Cartesian Velocity | external | Jog: tieni premuto un tasto e clicca sulla finestra principale, poi premi Spazio con un tasto premuto | in entrambi i casi il robot si ferma dolcemente e tiene la posizione |
 
 Durante ogni prova, in `/panda/bridge_status`: `control_command_success_rate` vicino a 1, `last_error` vuoto (salvo la prova 20), `missed_cycles` che cresce poco, `stalls` a 0 quando uno stream finisce da solo.
 
